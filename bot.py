@@ -49,7 +49,7 @@ def get_sis_value(soup, label):
 
 async def fetch_portal_soup(reg):
     url = SIS_URL.format(id=b64_encode(reg))
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+    headers = {"User-Agent": "Mozilla/5.0"}
     async with httpx.AsyncClient(timeout=40.0, headers=headers) as client:
         try:
             r = await client.get(url)
@@ -84,8 +84,8 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     keyboard = [
-        [InlineKeyboardButton("📊 Current Sem Attendance", callback_data="att")],
-        [InlineKeyboardButton("💰 Complete Fee Ledger", callback_data="fee")],
+        [InlineKeyboardButton("📊 Attendance", callback_data="att"),
+         InlineKeyboardButton("💰 Fee Ledger", callback_data="fee")],
         [InlineKeyboardButton("🔗 Open Full Results", url=SIS_URL.format(id=b64_encode(reg)))]
     ]
 
@@ -101,42 +101,41 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if query.data == "att":
         full_text = soup.get_text(separator=" ")
-        # Specifically targets the pattern: Attendance88.21%
-        match = re.search(r"Attendance\s*(\d+\.\d+)", full_text, re.I)
+        match = re.search(r"Attendance\s*[:]?\s*(\d+(\.\d+)?)\s*%", full_text, re.I)
         val = match.group(1) if match else "N/A"
-        
-        await query.message.reply_text(
-            f"📈 *CURRENT SEM ATTENDANCE*\n"
-            f"━━━━━━━━━━━━━━━\n"
-            f"🆔 ID: `{reg}`\n"
-            f"📊 Percentage: `{val}%`", 
-            parse_mode=ParseMode.MARKDOWN
-        )
+        await query.message.reply_text(f"📈 *Attendance for {reg}:* `{val}%`")
     
     elif query.data == "fee":
         fee_report = f"💰 *FEE LEDGER (ALL-TIME)*\n━━━━━━━━━━━━━━━\n"
+        
+        # Target the specific Year headers found in your screenshot
         year_patterns = ["I-BTECH", "II-BTECH", "III-BTECH", "FIN-BTECH"]
         found_data = False
 
         for year_code in year_patterns:
+            # Find the header (e.g., FEE DETAILS (I-BTECH))
             header = soup.find(string=re.compile(f"FEE DETAILS\s*\({year_code}\)", re.I))
             if header:
+                # Find the next row containing the actual amounts
                 data_row = header.find_parent('tr').find_next_sibling('tr')
                 if data_row:
                     row_text = data_row.get_text(separator=" ")
+                    # Extract Paid and Balance amounts
                     paid = re.search(r"TOTAL PAID AMOUNT\s*:\s*([\d,.]+)", row_text)
                     bal = re.search(r"TOTAL BALANCE AMOUNT\s*:\s*([\d,.]+)", row_text)
                     
-                    p_val = paid.group(1) if paid else "0.00"
-                    b_val = bal.group(1) if bal else "0.00"
-                    
-                    fee_report += f"📅 *{year_code}*\n"
-                    fee_report += f" ├ Paid: `₹{p_val}`\n"
-                    fee_report += f" └ Bal: `₹{b_val}`\n\n"
-                    found_data = True
+                    if paid or bal:
+                        p_val = paid.group(1) if paid else "0.00"
+                        b_val = bal.group(1) if bal else "0.00"
+                        
+                        # Formatting based on your specific visual request
+                        fee_report += f"📅 *{year_code}*\n"
+                        fee_report += f" ├ Paid: `₹{p_val}`\n"
+                        fee_report += f" └ Bal: `₹{b_val}`\n\n"
+                        found_data = True
 
         if not found_data:
-            fee_report += "⚠️ No Fee Ledger rows could be extracted."
+            fee_report += "⚠️ No Fee Ledger rows could be extracted. Please ensure the registration number is correct."
 
         await query.message.reply_text(fee_report, parse_mode=ParseMode.MARKDOWN)
 
