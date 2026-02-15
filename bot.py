@@ -12,16 +12,18 @@ from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 )
 
-# --- 24/7 HEARTBEAT (Prevents Koyeb Sleeping) ---
+# --- 24/7 HEARTBEAT (Keeps Koyeb active) ---
 def run_heartbeat():
     class HealthCheckHandler(http.server.SimpleHTTPRequestHandler):
         def do_GET(self):
             self.send_response(200)
             self.end_headers()
             self.wfile.write(b"GHOST_ENGINE_ONLINE")
-    # Koyeb routes traffic to port 8080
-    with socketserver.TCPServer(("", 8080), HealthCheckHandler) as httpd:
-        httpd.serve_forever()
+    try:
+        with socketserver.TCPServer(("", 8080), HealthCheckHandler) as httpd:
+            httpd.serve_forever()
+    except:
+        pass
 
 threading.Thread(target=run_heartbeat, daemon=True).start()
 
@@ -35,55 +37,70 @@ def b64_encode(text):
 # --- DATA EXTRACTION ENGINE ---
 
 async def get_portal_soup(reg):
-    """Fetches the HTML source of the portal."""
     url = SIS_URL.format(id=b64_encode(reg))
     headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
     }
-    async with httpx.AsyncClient(timeout=40.0, follow_redirects=True) as client:
+    async with httpx.AsyncClient(timeout=45.0, follow_redirects=True) as client:
         try:
             response = await client.get(url, headers=headers)
             if response.status_code == 200:
                 return BeautifulSoup(response.text, 'html.parser')
             return None
-        except Exception:
+        except Exception as e:
+            print(f"Connection Error: {e}")
             return None
 
-def extract_field(soup, label_pattern):
-    """Generic helper to find data next to a label in a table."""
-    tag = soup.find(string=re.compile(label_pattern, re.I))
-    if tag:
-        # Move to the parent td, then to the next sibling td which has the value
-        parent_td = tag.find_parent('td')
-        if parent_td:
-            next_td = parent_td.find_next_sibling('td')
-            return next_td.get_text(strip=True) if next_td else "N/A"
+def extract_smart(soup, keywords):
+    """Aggressive search: looks for labels and grabs the next text piece."""
+    for keyword in keywords:
+        # Search for any tag containing the keyword
+        target = soup.find(string=re.compile(keyword, re.I))
+        if target:
+            # The data is usually in the next cell (td)
+            parent = target.find_parent('td')
+            if parent:
+                # Check next sibling
+                val = parent.find_next_sibling('td')
+                if val:
+                    return val.get_text(strip=True)
+                # If not sibling, check next overall td
+                val = target.find_next('td')
+                if val:
+                    return val.get_text(strip=True)
     return "N/A"
 
 # --- BOT HANDLERS ---
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🛰️ *NECRACK GHOST v16*\n\nEnter Registration Number to fetch Profile:")
+    await update.message.reply_text("🛰️ *NECRACK GHOST v16*\n\nEnter Registration Number to login:")
 
 async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reg = update.message.text.strip().upper()
     context.user_data["reg"] = reg
     
-    msg = await update.message.reply_text(f"🔍 Fetching data for `{reg}`...")
+    msg = await update.message.reply_text(f"⏳ Synchronizing with Portal for `{reg}`...")
     soup = await get_portal_soup(reg)
     await msg.delete()
 
     if not soup:
-        return await update.message.reply_text("❌ Portal Unreachable. Try again later.")
+        return await update.message.reply_text("❌ Portal Unreachable. The college server is not responding.")
 
-    # 📋 SCRAPE PROFILE DATA
-    name = extract_field(soup, "Student Name")
-    htc = extract_field(soup, "H.T.No")
-    campus = extract_field(soup, "Campus")
-    year = extract_field(soup, "Year")
+    # Extracting details using multiple keyword attempts
+    name = extract_smart(soup, ["Student Name", "Name"])
+    htc = extract_smart(soup, ["H.T.No", "Hall Ticket"])
+    campus = extract_smart(soup, ["Campus", "College"])
+    year = extract_smart(soup, ["Year", "Batch"])
     
-    if name == "N/A":
-        return await update.message.reply_text("❌ ID Not Found. Please check the registration number.")
+    # Validation
+    if name == "N/A" and htc == "N/A":
+        return await update.message.reply_text(
+            f"❌ *ID Not Found:* `{reg}`\n\nPossible reasons:\n"
+            "• Registration ID is invalid.\n"
+            "• Portal structure has changed.\n"
+            "• Server is blocking the bot."
+        )
 
     profile_text = (
         f"👤 *STUDENT PROFILE*\n"
@@ -94,12 +111,11 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📅 *YEAR:* `{year}`\n"
     )
 
-    # 🔘 NAVIGATION BUTTONS
     result_link = SIS_URL.format(id=b64_encode(reg))
     keyboard = [
-        [InlineKeyboardButton("📊 Attendance", callback_data="show_att"),
-         InlineKeyboardButton("💰 Fee Details", callback_data="show_fee")],
-        [InlineKeyboardButton("🔗 Open Results in Browser", url=result_link)]
+        [InlineKeyboardButton("📊 Attendance", callback_data="att"),
+         InlineKeyboardButton("💰 Fee Ledger", callback_data="fee")],
+        [InlineKeyboardButton("🔗 Open Full Results", url=result_link)]
     ]
 
     await update.message.reply_text(
@@ -117,33 +133,34 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return await query.message.reply_text("❌ Session expired. Re-enter ID.")
 
     soup = await get_portal_soup(reg)
-    
-    if query.data == "show_att":
-        att = extract_field(soup, "Attendance")
+    if not soup:
+        return await context.bot.send_message(query.message.chat_id, "❌ Portal Offline.")
+
+    if query.data == "att":
+        val = extract_smart(soup, ["Attendance", "Total Attendance"])
         await context.bot.send_message(
             query.message.chat_id, 
-            f"📈 *Attendance for* `{reg}`: `{att}%`",
+            f"📈 *Attendance for* `{reg}`: `{val if '%' in val else val+'%'}`",
             parse_mode=ParseMode.MARKDOWN
         )
     
-    elif query.data == "show_fee":
-        # Example of targeted scraping for specific text in the fee section
+    elif query.data == "fee":
         await context.bot.send_message(
             query.message.chat_id, 
-            f"💰 *Fee Status for* `{reg}`: Please check the Result Link for the full ledger.",
+            f"💰 *Fee Status for* `{reg}`: Please use the Browser Link for the detailed ledger.",
             parse_mode=ParseMode.MARKDOWN
         )
 
-# --- MAIN EXECUTION ---
+# --- EXECUTION ---
 if __name__ == "__main__":
     app = ApplicationBuilder().token(TOKEN).build()
     
-    # Drop pending updates to avoid Conflict errors on restart
+    # Delete old webhooks to clear 'Conflict' errors
     asyncio.get_event_loop().run_until_complete(app.bot.delete_webhook(drop_pending_updates=True))
     
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_input))
     app.add_handler(CallbackQueryHandler(button_handler))
     
-    print("GHOST_ENGINE_V16_ONLINE")
+    print("GHOST_ENGINE_V16_ONLINE_24/7")
     app.run_polling()
