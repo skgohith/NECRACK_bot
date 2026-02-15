@@ -12,7 +12,7 @@ from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 )
 
-# --- 24/7 HEARTBEAT ---
+# --- 24/7 HEARTBEAT FOR KOYEB ---
 def run_heartbeat():
     class HealthCheckHandler(http.server.SimpleHTTPRequestHandler):
         def do_GET(self):
@@ -34,14 +34,12 @@ SIS_URL = "http://115.241.194.20/sis/Examination/Reports/StudentSearchHTMLReport
 def b64_encode(text):
     return base64.b64encode(text.encode('utf-8')).decode('utf-8')
 
-# --- RE-ENGINEERED EXTRACTION ENGINE ---
+# --- DATA EXTRACTION ENGINE ---
 
 def get_sis_value(soup, label):
-    """Deep search for specific labels in any cell."""
+    """Finds standard student details in the main table."""
     target = soup.find(string=re.compile(label, re.I))
     if target:
-        if ":" in target:
-            return target.split(":", 1)[1].strip()
         parent_td = target.find_parent('td')
         if parent_td:
             next_td = parent_td.find_next_sibling('td')
@@ -51,7 +49,7 @@ def get_sis_value(soup, label):
 
 async def fetch_portal_soup(reg):
     url = SIS_URL.format(id=b64_encode(reg))
-    headers = {"User-Agent": "Mozilla/5.0"}
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
     async with httpx.AsyncClient(timeout=40.0, headers=headers) as client:
         try:
             r = await client.get(url)
@@ -62,18 +60,18 @@ async def fetch_portal_soup(reg):
 # --- BOT HANDLERS ---
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🛰️ *NECRACK GHOST v16*\nEnter Registration Number:")
+    await update.message.reply_text("🛰️ *NECRACK GHOST v16*\n\nEnter Registration Number to login:")
 
 async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reg = update.message.text.strip().upper()
     context.user_data["reg"] = reg
     
-    msg = await update.message.reply_text(f"⏳ Accessing Secure Portal for `{reg}`...")
+    msg = await update.message.reply_text(f"⏳ Syncing Profile `{reg}`...")
     soup = await fetch_portal_soup(reg)
     await msg.delete()
 
     if not soup:
-        return await update.message.reply_text("❌ Portal Offline. Server might be busy.")
+        return await update.message.reply_text("❌ Portal Offline. Server might be down.")
 
     name = get_sis_value(soup, "NAME")
     htc = get_sis_value(soup, "HTC NO")
@@ -86,8 +84,8 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     keyboard = [
-        [InlineKeyboardButton("📊 Attendance", callback_data="att"),
-         InlineKeyboardButton("💰 Fee Ledger", callback_data="fee")],
+        [InlineKeyboardButton("📊 Current Sem Attendance", callback_data="att")],
+        [InlineKeyboardButton("💰 Complete Fee Ledger", callback_data="fee")],
         [InlineKeyboardButton("🔗 Open Full Results", url=SIS_URL.format(id=b64_encode(reg)))]
     ]
 
@@ -99,49 +97,48 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
 
     soup = await fetch_portal_soup(reg)
-    if not soup:
-        return await query.message.reply_text("❌ Error: Could not refresh data.")
+    if not soup: return
 
     if query.data == "att":
-        # Broad search for Attendance percentage
-        full_page_text = soup.get_text(separator=" ")
-        # Finds digits followed by % or the word 'Attendance'
-        match = re.search(r"Attendance\s*[:]?\s*(\d+(\.\d+)?)\s*%", full_page_text, re.I)
-        if not match:
-            # Secondary check for raw digits near the end of the text
-            match = re.search(r"(\d{2}\.\d{2})", full_page_text)
-            
+        full_text = soup.get_text(separator=" ")
+        # Specifically targets the pattern: Attendance88.21%
+        match = re.search(r"Attendance\s*(\d+\.\d+)", full_text, re.I)
         val = match.group(1) if match else "N/A"
-        await query.message.reply_text(f"📈 *Attendance for {reg}:* `{val}%`", parse_mode=ParseMode.MARKDOWN)
+        
+        await query.message.reply_text(
+            f"📈 *CURRENT SEM ATTENDANCE*\n"
+            f"━━━━━━━━━━━━━━━\n"
+            f"🆔 ID: `{reg}`\n"
+            f"📊 Percentage: `{val}%`", 
+            parse_mode=ParseMode.MARKDOWN
+        )
     
     elif query.data == "fee":
-        fee_header = f"🆔 *ID:* `{reg}`\n\n💰 *FEE LEDGER (ALL-TIME)*\n━━━━━━━━━━━━━━━\n"
-        ledger_body = ""
-        
-        # Scrape every table row to find year-wise data
-        rows = soup.find_all('tr')
-        for row in rows:
-            text = row.get_text(separator=" ").strip()
-            # Look for any row containing year markers like I, II, III, IV, or FINAL
-            if re.search(r"(I|II|III|IV|FINAL)\s*(B\.TECH|YEAR)", text, re.I):
-                cells = [c.get_text(strip=True) for c in row.find_all('td')]
-                
-                # We need at least Year, Paid, and Balance columns
-                if len(cells) >= 3:
-                    # Logic: Year is first, Paid/Balance are usually the last two numeric columns
-                    year_label = cells[0]
-                    # Filter cells to find purely numeric/currency values for Paid/Bal
-                    numbers = [c for c in cells if re.search(r"\d", c)]
+        fee_report = f"💰 *FEE LEDGER (ALL-TIME)*\n━━━━━━━━━━━━━━━\n"
+        year_patterns = ["I-BTECH", "II-BTECH", "III-BTECH", "FIN-BTECH"]
+        found_data = False
+
+        for year_code in year_patterns:
+            header = soup.find(string=re.compile(f"FEE DETAILS\s*\({year_code}\)", re.I))
+            if header:
+                data_row = header.find_parent('tr').find_next_sibling('tr')
+                if data_row:
+                    row_text = data_row.get_text(separator=" ")
+                    paid = re.search(r"TOTAL PAID AMOUNT\s*:\s*([\d,.]+)", row_text)
+                    bal = re.search(r"TOTAL BALANCE AMOUNT\s*:\s*([\d,.]+)", row_text)
                     
-                    if len(numbers) >= 2:
-                        paid = numbers[-2]
-                        bal = numbers[-1]
-                        ledger_body += f"📅 *{year_label}*\n ├ Paid: `₹{paid}`\n └ Bal: `₹{bal}`\n\n"
+                    p_val = paid.group(1) if paid else "0.00"
+                    b_val = bal.group(1) if bal else "0.00"
+                    
+                    fee_report += f"📅 *{year_code}*\n"
+                    fee_report += f" ├ Paid: `₹{p_val}`\n"
+                    fee_report += f" └ Bal: `₹{b_val}`\n\n"
+                    found_data = True
 
-        if not ledger_body:
-            ledger_body = "⚠️ *Data Extraction Failed:*\nThe portal table format is not recognized. Please use the 'Open Results' link."
+        if not found_data:
+            fee_report += "⚠️ No Fee Ledger rows could be extracted."
 
-        await query.message.reply_text(fee_header + ledger_body, parse_mode=ParseMode.MARKDOWN)
+        await query.message.reply_text(fee_report, parse_mode=ParseMode.MARKDOWN)
 
 if __name__ == "__main__":
     app = ApplicationBuilder().token(TOKEN).build()
