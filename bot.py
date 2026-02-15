@@ -3,14 +3,16 @@ import asyncio
 import http.server
 import socketserver
 import threading
-from playwright.async_api import async_playwright
+import re
+import httpx
+from bs4 import BeautifulSoup
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 )
 
-# --- 24/7 HEARTBEAT ---
+# --- 24/7 HEARTBEAT (Koyeb "Always Running") ---
 def run_heartbeat():
     class HealthCheckHandler(http.server.SimpleHTTPRequestHandler):
         def do_GET(self):
@@ -29,65 +31,103 @@ SIS_URL = "http://115.241.194.20/sis/Examination/Reports/StudentSearchHTMLReport
 def b64_encode(text):
     return base64.b64encode(text.encode('utf-8')).decode('utf-8')
 
-# --- BACKGROUND SCREENSHOT ENGINE ---
-async def capture_profile_screenshot(reg):
+# --- TEXT EXTRACTION ENGINE (Attendance Page) ---
+
+async def get_attendance_page_data(reg):
+    """Scrapes data directly from the Attendance/Profile page as text."""
     url = SIS_URL.format(id=b64_encode(reg))
-    async with async_playwright() as p:
-        # Launching headless browser (invisible)
-        browser = await p.chromium.launch(headless=True)
-        page = await browser.new_page(viewport={"width": 1280, "height": 800})
-        
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
+    async with httpx.AsyncClient(timeout=40.0, follow_redirects=True) as client:
         try:
-            # Navigate to the portal
-            await page.goto(url, wait_until="networkidle", timeout=60000)
+            response = await client.get(url, headers=headers)
+            if response.status_code != 200: return None
             
-            # Locate the specific profile table or container (Adjust selector if needed)
-            # This captures the top part of the page where the profile usually sits
-            screenshot_path = f"profile_{reg}.png"
-            await page.screenshot(path=screenshot_path, clip={"x": 0, "y": 0, "width": 1000, "height": 600})
+            soup = BeautifulSoup(response.text, 'html.parser')
             
-            await browser.close()
-            return screenshot_path
-        except Exception as e:
-            print(f"Screenshot Error: {e}")
-            await browser.close()
+            # Helper to find values based on table labels
+            def find_label_value(label_text):
+                tag = soup.find(string=re.compile(label_text, re.I))
+                if tag:
+                    # Look for the next td which usually contains the data
+                    td = tag.find_parent('td') if tag.name != 'td' else tag
+                    if td:
+                        next_td = td.find_next_sibling('td')
+                        return next_td.get_text(strip=True) if next_td else "N/A"
+                return "N/A"
+
+            return {
+                "name": find_label_value("Student Name"),
+                "htc": find_label_value("H.T.No"),
+                "campus": find_label_value("Campus"),
+                "year": find_label_value("Year"),
+                "total_attendance": find_label_value("Attendance"), # Often found in the same page summary
+                "soup": soup 
+            }
+        except Exception:
             return None
 
-# --- BOT HANDLERS ---
+# --- BOT INTERFACE ---
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🛰️ *NECRACK GHOST v16*\nEnter Registration ID to view Profile Screenshot:")
+    await update.message.reply_text("🛰️ *NECRACK GHOST v16*\n\nEnter Registration Number to see Profile & Menu:")
 
 async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reg = update.message.text.strip().upper()
     context.user_data["reg"] = reg
     
-    status_msg = await update.message.reply_text("📸 Capturing profile screenshot in background... Please wait.")
-    
-    # Take screenshot
-    photo_path = await capture_profile_screenshot(reg)
-    await status_msg.delete()
+    status = await update.message.reply_text(f"⏳ Extracting data for `{reg}` from Attendance portal...")
+    data = await get_attendance_page_data(reg)
+    await status.delete()
 
+    if not data or data['name'] == "N/A":
+        return await update.message.reply_text("❌ Error: Could not find data for this ID. Check if portal is up.")
+
+    # Profile View (Text Format)
+    profile_msg = (
+        f"👤 *STUDENT PROFILE*\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"📛 *NAME:* `{data['name']}`\n"
+        f"🆔 *HTC NO:* `{data['htc']}`\n"
+        f"🏫 *CAMPUS:* `{data['campus']}`\n"
+        f"📅 *YEAR:* `{data['year']}`\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"📊 *TOTAL ATTENDANCE:* `{data['total_attendance']}%`"
+    )
+
+    # Separate Buttons
     result_link = SIS_URL.format(id=b64_encode(reg))
-    keyboard = [[InlineKeyboardButton("🔗 Open Result Page", url=result_link)]]
+    keyboard = [
+        [InlineKeyboardButton("📊 Detailed Attendance", callback_data="det_att")],
+        [InlineKeyboardButton("💰 Fee Details", callback_data="det_fee")],
+        [InlineKeyboardButton("🔗 Open Results in Browser", url=result_link)]
+    ]
 
-    if photo_path:
-        with open(photo_path, 'rb') as photo:
-            await update.message.reply_photo(
-                photo=photo,
-                caption=f"👤 *PROFILE DATA:* `{reg}`",
-                reply_markup=InlineKeyboardMarkup(keyboard),
-                parse_mode=ParseMode.MARKDOWN
-            )
-    else:
-        await update.message.reply_text("❌ Failed to capture screenshot. Portal might be down.")
+    await update.message.reply_text(
+        profile_msg,
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode=ParseMode.MARKDOWN
+    )
 
-# --- RUN ---
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    reg = context.user_data.get("reg")
+    await query.answer()
+
+    if query.data == "det_att":
+        await context.bot.send_message(query.message.chat_id, f"📝 *Detailed Attendance table for {reg}* is being processed...")
+        # Add logic to scrape and format the specific attendance table here
+    
+    elif query.data == "det_fee":
+        await context.bot.send_message(query.message.chat_id, f"💳 *Fee Ledger for {reg}* is being processed...")
+
+# --- RUN BOT ---
 if __name__ == "__main__":
     app = ApplicationBuilder().token(TOKEN).build()
-    asyncio.get_event_loop().run_until_complete(app.bot.delete_webhook(drop_pending_updates=True))
-    
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_input))
+    app.add_handler(CallbackQueryHandler(button_handler))
     
-    print("GHOST_ENGINE_V16_ONLINE_SCREENSHOT_ENABLED")
+    print("GHOST_ENGINE_TEXT_MODE_ONLINE")
     app.run_polling()
