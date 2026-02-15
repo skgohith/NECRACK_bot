@@ -37,7 +37,6 @@ def b64_encode(text):
 # --- DATA EXTRACTION ENGINE ---
 
 def get_sis_value(soup, label):
-    """Finds standard student details in the main table."""
     target = soup.find(string=re.compile(label, re.I))
     if target:
         parent_td = target.find_parent('td')
@@ -49,7 +48,7 @@ def get_sis_value(soup, label):
 
 async def fetch_portal_soup(reg):
     url = SIS_URL.format(id=b64_encode(reg))
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
     async with httpx.AsyncClient(timeout=40.0, headers=headers) as client:
         try:
             r = await client.get(url)
@@ -84,9 +83,10 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
     keyboard = [
-        [InlineKeyboardButton("📊 Current Sem Attendance", callback_data="att")],
-        [InlineKeyboardButton("💰 Complete Fee Ledger", callback_data="fee")],
-        [InlineKeyboardButton("🔗 Open Full Results", url=SIS_URL.format(id=b64_encode(reg)))]
+        [InlineKeyboardButton("📊 Attendance", callback_data="att"),
+         InlineKeyboardButton("💰 Fee Ledger", callback_data="fee")],
+        [InlineKeyboardButton("🔗 Open Full Results", url=SIS_URL.format(id=b64_encode(reg)))],
+        [InlineKeyboardButton("🧹 Clear Dashboard", callback_data="clear")]
     ]
 
     await update.message.reply_text(profile_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
@@ -94,22 +94,25 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     reg = context.user_data.get("reg")
-    await query.answer()
+    
+    if query.data == "clear":
+        await query.answer("🧹 Dashboard Cleared")
+        return await query.message.delete()
 
+    await query.answer()
     soup = await fetch_portal_soup(reg)
     if not soup: return
 
     if query.data == "att":
         full_text = soup.get_text(separator=" ")
-        # Specifically targets the pattern: Attendance88.21%
         match = re.search(r"Attendance\s*(\d+\.\d+)", full_text, re.I)
         val = match.group(1) if match else "N/A"
         
+        # Adding a delete button to result messages too
+        kb = [[InlineKeyboardButton("🗑️ Delete Info", callback_data="clear")]]
         await query.message.reply_text(
-            f"📈 *CURRENT SEM ATTENDANCE*\n"
-            f"━━━━━━━━━━━━━━━\n"
-            f"🆔 ID: `{reg}`\n"
-            f"📊 Percentage: `{val}%`", 
+            f"📈 *CURRENT SEM ATTENDANCE*\n━━━━━━━━━━━━━━━\n🆔 ID: `{reg}`\n📊 Percentage: `{val}%`", 
+            reply_markup=InlineKeyboardMarkup(kb),
             parse_mode=ParseMode.MARKDOWN
         )
     
@@ -126,19 +129,17 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     row_text = data_row.get_text(separator=" ")
                     paid = re.search(r"TOTAL PAID AMOUNT\s*:\s*([\d,.]+)", row_text)
                     bal = re.search(r"TOTAL BALANCE AMOUNT\s*:\s*([\d,.]+)", row_text)
-                    
                     p_val = paid.group(1) if paid else "0.00"
                     b_val = bal.group(1) if bal else "0.00"
                     
-                    fee_report += f"📅 *{year_code}*\n"
-                    fee_report += f" ├ Paid: `₹{p_val}`\n"
-                    fee_report += f" └ Bal: `₹{b_val}`\n\n"
+                    fee_report += f"📅 *{year_code}*\n ├ Paid: `₹{p_val}`\n └ Bal: `₹{b_val}`\n\n"
                     found_data = True
 
         if not found_data:
             fee_report += "⚠️ No Fee Ledger rows could be extracted."
 
-        await query.message.reply_text(fee_report, parse_mode=ParseMode.MARKDOWN)
+        kb = [[InlineKeyboardButton("🗑️ Delete Info", callback_data="clear")]]
+        await query.message.reply_text(fee_report, reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.MARKDOWN)
 
 if __name__ == "__main__":
     app = ApplicationBuilder().token(TOKEN).build()
