@@ -5,6 +5,7 @@ import socketserver
 import threading
 import re
 import httpx
+import os
 from bs4 import BeautifulSoup
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
@@ -12,31 +13,40 @@ from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 )
 
-# --- 24/7 HEARTBEAT FOR KOYEB ---
+# --- 🛰️ 24/7 HEARTBEAT FOR KOYEB ---
 def run_heartbeat():
+    # Koyeb passes the port dynamically via environment variables
+    port = int(os.environ.get("PORT", 8080))
     class HealthCheckHandler(http.server.SimpleHTTPRequestHandler):
         def do_GET(self):
             self.send_response(200)
             self.end_headers()
             self.wfile.write(b"GHOST_ENGINE_ONLINE")
-    try:
-        with socketserver.TCPServer(("", 8080), HealthCheckHandler) as httpd:
-            httpd.serve_forever()
-    except:
-        pass
+        def log_message(self, format, *args):
+            return # Keep logs clean
 
+    try:
+        socketserver.TCPServer.allow_reuse_address = True
+        with socketserver.TCPServer(("", port), HealthCheckHandler) as httpd:
+            print(f"📡 Heartbeat Server live on port {port}")
+            httpd.serve_forever()
+    except Exception as e:
+        print(f"❌ Heartbeat Failed: {e}")
+
+# Start heartbeat in a background thread
 threading.Thread(target=run_heartbeat, daemon=True).start()
 
-# --- CONFIG ---
+# --- ⚙️ CONFIG ---
 TOKEN = "8491426723:AAECUa6FEZbRy1ZKsJ7FWGA43QO3xIw5cHE"
 SIS_URL = "http://115.241.194.20/sis/Examination/Reports/StudentSearchHTMLReport_student.aspx?R={id}&T=-8584723613578166740"
 
 def b64_encode(text):
     return base64.b64encode(text.encode('utf-8')).decode('utf-8')
 
-# --- DATA EXTRACTION ENGINE ---
+# --- 🔍 DATA EXTRACTION ENGINE ---
 
 def get_sis_value(soup, label):
+    """Finds student name and HTC number from the main table."""
     target = soup.find(string=re.compile(label, re.I))
     if target:
         parent_td = target.find_parent('td')
@@ -47,16 +57,17 @@ def get_sis_value(soup, label):
     return "N/A"
 
 async def fetch_portal_soup(reg):
+    """Fetches unique data from the SIS portal for each ID."""
     url = SIS_URL.format(id=b64_encode(reg))
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-    async with httpx.AsyncClient(timeout=40.0, headers=headers) as client:
+    async with httpx.AsyncClient(timeout=45.0, headers=headers) as client:
         try:
             r = await client.get(url)
             return BeautifulSoup(r.text, 'html.parser') if r.status_code == 200 else None
         except:
             return None
 
-# --- BOT HANDLERS ---
+# --- 🤖 BOT HANDLERS ---
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("🛰️ *NECRACK GHOST v16*\n\nEnter Registration Number to login:")
@@ -70,7 +81,7 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await msg.delete()
 
     if not soup:
-        return await update.message.reply_text("❌ Portal Offline. Server might be down.")
+        return await update.message.reply_text("❌ Portal Offline. Please try again later.")
 
     name = get_sis_value(soup, "NAME")
     htc = get_sis_value(soup, "HTC NO")
@@ -108,7 +119,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         match = re.search(r"Attendance\s*(\d+\.\d+)", full_text, re.I)
         val = match.group(1) if match else "N/A"
         
-        # Adding a delete button to result messages too
         kb = [[InlineKeyboardButton("🗑️ Delete Info", callback_data="clear")]]
         await query.message.reply_text(
             f"📈 *CURRENT SEM ATTENDANCE*\n━━━━━━━━━━━━━━━\n🆔 ID: `{reg}`\n📊 Percentage: `{val}%`", 
@@ -146,4 +156,6 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_input))
     app.add_handler(CallbackQueryHandler(button_handler))
-    app.run_polling()
+    
+    print("🚀 Bot is launching...")
+    app.run_polling(drop_pending_updates=True)
