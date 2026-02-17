@@ -151,3 +151,44 @@ if __name__ == "__main__":
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_input))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.run_polling(drop_pending_updates=True)
+    
+    if query.data == "clear":
+        return await query.message.delete()
+
+    await query.answer("🔄 Refreshing Data...")
+    soup = await fetch_portal_soup(reg)
+    if not soup:
+        return await query.message.reply_text("❌ Portal Offline. Try again later.")
+
+    if query.data == "att":
+        full_text = soup.get_text(separator=" ")
+        match = re.search(r"Attendance\s*(\d+\.\d+)", full_text, re.I)
+        val = match.group(1) if match else "N/A"
+        kb = [[InlineKeyboardButton("🗑️ Delete", callback_data="clear")]]
+        await query.message.reply_text(f"📈 *ATTENDANCE*\nID: `{reg}`\n📊 Percentage: `{val}%`", reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.MARKDOWN)
+    
+    elif query.data == "fee":
+        fee_report = f"💰 *FEE LEDGER*\n━━━━━━━━━━━━━━━\n"
+        year_patterns = ["I-BTECH", "II-BTECH", "III-BTECH", "FIN-BTECH"]
+        found_data = False
+        for year_code in year_patterns:
+            header = soup.find(string=re.compile(f"FEE DETAILS\s*\({year_code}\)", re.I))
+            if header:
+                data_row = header.find_parent('tr').find_next_sibling('tr')
+                if data_row:
+                    row_text = data_row.get_text(separator=" ")
+                    paid = re.search(r"TOTAL PAID AMOUNT\s*:\s*([\d,.]+)", row_text)
+                    bal = re.search(r"TOTAL BALANCE AMOUNT\s*:\s*([\d,.]+)", row_text)
+                    fee_report += f"📅 *{year_code}*\n ├ Paid: `₹{paid.group(1) if paid else '0'}`\n └ Bal: `₹{bal.group(1) if bal else '0'}`\n\n"
+                    found_data = True
+        
+        kb = [[InlineKeyboardButton("🗑️ Delete", callback_data="clear")]]
+        await query.message.reply_text(fee_report if found_data else "⚠️ No fee data.", reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.MARKDOWN)
+
+if __name__ == "__main__":
+    app = ApplicationBuilder().token(TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_input))
+    app.add_handler(CallbackQueryHandler(button_handler))
+    app.run_polling(drop_pending_updates=True)
+
