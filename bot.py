@@ -152,6 +152,47 @@ if __name__ == "__main__":
     app.add_handler(CallbackQueryHandler(button_handler))
     app.run_polling(drop_pending_updates=True)
                     short_name = get_acronym(full_name)
+                    res_status = "PASS"
+                    if grade in ["F", "AB", "FAIL"]:
+                        res_status = "FAIL"
+                        backlogs += 1
+                    
+                    # Aligns data exactly under the headers
+                    transcript += f"{short_name.ljust(7)} | {grade.ljust(3)} | {res_status}\n"
+            
+            transcript += "```" 
+
+        res_msg = (
+            f"🏆 *RESULTS:* `{reg}`\n"
+            f"━━━━━━━━━━━━━━━\n"
+            f"📈 SGPA: `{sgpa.group(1) if sgpa else 'N/A'}` | 📉 BL: `{backlogs}`\n\n"
+            f"📖 *TRANSCRIPT:*\n{transcript if len(transcript) > 30 else '⚠️ No records found.'}"
+        )
+        return await query.message.reply_text(res_msg, parse_mode=ParseMode.MARKDOWN)
+
+    # Standard SIS logic for Attendance/Fee
+    soup = await fetch_soup(SIS_URL.format(id=encoded_id))
+    if query.data == "att":
+        val = re.search(r"Attendance\s*(\d+\.\d+)", soup.get_text(), re.I)
+        await query.message.reply_text(f"📊 *ATTENDANCE:* `{val.group(1) if val else 'N/A'}%`", parse_mode=ParseMode.MARKDOWN)
+    elif query.data == "fee":
+        fee_report = "💰 *FEE LEDGER*\n━━━━━━━━━━━━━━━\n"
+        for y in ["I-BTECH", "II-BTECH", "III-BTECH", "FIN-BTECH"]:
+            h = soup.find(string=re.compile(f"FEE DETAILS\s*\({y}\)", re.I))
+            if h:
+                row = h.find_parent('tr').find_next_sibling('tr').get_text(separator=" ")
+                p = re.search(r"TOTAL PAID AMOUNT\s*:\s*([\d,.]+)", row)
+                b = re.search(r"TOTAL BALANCE AMOUNT\s*:\s*([\d,.]+)", row)
+                fee_report += f"📅 *{y}*: P: `₹{p.group(1) if p else '0'}` | B: `₹{b.group(1) if b else '0'}`\n"
+        await query.message.reply_text(fee_report, parse_mode=ParseMode.MARKDOWN)
+
+if __name__ == "__main__":
+    app = ApplicationBuilder().token(TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_input))
+    app.add_handler(CallbackQueryHandler(button_handler))
+    app.run_polling(drop_pending_updates=True)
+                    short_name = get_acronym(full_name)
                     res_status = "P"
                     if grade in ["F", "AB", "FAIL"]:
                         res_status = "F"
@@ -228,5 +269,6 @@ if __name__ == "__main__":
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_input))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.run_polling(drop_pending_updates=True)
+
 
 
