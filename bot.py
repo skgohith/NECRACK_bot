@@ -35,13 +35,11 @@ threading.Thread(target=run_heartbeat, daemon=True).start()
 # --- ⚙️ CONFIG ---
 TOKEN = "8491426723:AAECUa6FEZbRy1ZKsJ7FWGA43QO3xIw5cHE"
 SIS_URL = "http://115.241.194.20/sis/Examination/Reports/StudentSearchHTMLReport_student.aspx?R={id}&T=-8584723613578166740"
+RESULT_URL = "https://narayanagroup.co.in/patient/EngAutonomousReport.aspx/MjAyMjA5MDl2MGgx"
 
-# List of Free Proxy Gateways / User Agents for Rotation
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1"
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 ]
 
 def b64_encode(text):
@@ -49,35 +47,13 @@ def b64_encode(text):
 
 # --- 🔍 DATA EXTRACTION ENGINE ---
 
-def get_sis_value(soup, label):
-    target = soup.find(string=re.compile(label, re.I))
-    if target:
-        parent_td = target.find_parent('td')
-        if parent_td:
-            next_td = parent_td.find_next_sibling('td')
-            if next_td: return next_td.get_text(strip=True)
-    return "N/A"
-
-async def fetch_portal_soup(reg):
-    url = SIS_URL.format(id=b64_encode(reg))
-    
-    # Rotates User-Agent for every request
-    headers = {
-        "User-Agent": random.choice(USER_AGENTS),
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.5",
-        "Connection": "keep-alive"
-    }
-
+async def fetch_soup(url):
+    headers = {"User-Agent": random.choice(USER_AGENTS)}
     async with httpx.AsyncClient(timeout=50.0, headers=headers, follow_redirects=True, verify=False) as client:
         try:
-            # Note: For true IP rotation without a paid proxy, we rely on Koyeb's dynamic outbound routing
             r = await client.get(url)
-            if r.status_code == 200:
-                return BeautifulSoup(r.text, 'html.parser')
-            return None
-        except:
-            return None
+            return BeautifulSoup(r.text, 'html.parser') if r.status_code == 200 else None
+        except: return None
 
 # --- 🤖 BOT HANDLERS ---
 
@@ -88,22 +64,22 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reg = update.message.text.strip().upper()
     context.user_data["reg"] = reg
     
-    msg = await update.message.reply_text(f"⏳ Rotating IP & Fetching `{reg}`...")
-    soup = await fetch_portal_soup(reg)
+    msg = await update.message.reply_text(f"⏳ Synchronizing Ghost Engine for `{reg}`...")
+    soup = await fetch_soup(SIS_URL.format(id=b64_encode(reg)))
     await msg.delete()
 
     if not soup:
-        return await update.message.reply_text("❌ *Portal Offline*\nServer is blocking connections or down. Try again in 1 minute.")
+        return await update.message.reply_text("❌ *Portal Offline*\nTry again in a moment.")
 
-    name = get_sis_value(soup, "NAME")
-    htc = get_sis_value(soup, "HTC NO")
+    name_target = soup.find(string=re.compile("NAME", re.I))
+    name = name_target.find_parent('td').find_next_sibling('td').get_text(strip=True) if name_target else "N/A"
 
-    profile_text = f"👤 *STUDENT PROFILE*\n━━━━━━━━━━━━━━━\n📛 *NAME:* `{name}`\n🆔 *HTC NO:* `{htc}`\n"
+    profile_text = f"👤 *STUDENT PROFILE*\n━━━━━━━━━━━━━━━\n📛 *NAME:* `{name}`\n🆔 *ID:* `{reg}`\n"
     
     keyboard = [
         [InlineKeyboardButton("📊 Attendance", callback_data="att"),
-         InlineKeyboardButton("💰 Fee Ledger", callback_data="fee")],
-        [InlineKeyboardButton("🔗 Open Results", url=SIS_URL.format(id=b64_encode(reg)))],
+         InlineKeyboardButton("🏆 Results", callback_data="res")],
+        [InlineKeyboardButton("💰 Fee Ledger", callback_data="fee")],
         [InlineKeyboardButton("🧹 Clear Dashboard", callback_data="clear")]
     ]
     await update.message.reply_text(profile_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
@@ -111,39 +87,64 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     reg = context.user_data.get("reg")
+    if query.data == "clear": return await query.message.delete()
     
-    if query.data == "clear":
-        return await query.message.delete()
+    await query.answer("📡 Fetching Data...")
 
-    await query.answer("🔄 Refreshing Data...")
-    soup = await fetch_portal_soup(reg)
-    if not soup:
-        return await query.message.reply_text("❌ Portal Offline. Try again later.")
+    if query.data == "res":
+        soup = await fetch_soup(RESULT_URL)
+        if not soup: return await query.message.reply_text("❌ Results Portal Unreachable.")
+        
+        full_text = soup.get_text(separator=" ")
+        sgpa_match = re.search(r"SGPA\s*[:]?\s*(\d+\.\d+)", full_text, re.I)
+        sgpa = sgpa_match.group(1) if sgpa_match else "N/A"
+
+        # Find results table for Transcript
+        transcript = ""
+        backlogs = 0
+        tables = soup.find_all('table')
+        for table in tables:
+            rows = table.find_all('tr')
+            for row in rows[1:]: # Skip header
+                cols = row.find_all('td')
+                if len(cols) >= 3:
+                    sub_name = cols[1].get_text(strip=True)
+                    grade = cols[-1].get_text(strip=True)
+                    if grade == "F": backlogs += 1
+                    transcript += f" ┕ `{sub_name}`: ({grade})\n"
+
+        res_msg = (
+            f"🏆 *ACADEMIC RESULTS*\n"
+            f"━━━━━━━━━━━━━━━\n"
+            f"🆔 ID: `{reg}`\n"
+            f"📈 SGPA: `{sgpa}`\n"
+            f"📉 Total Backlogs: `{backlogs}`\n\n"
+            f"✅ *SEMESTER TRANSCRIPT:*\n"
+            f"{transcript if transcript else '⚠️ No transcript data found.'}\n"
+        )
+        kb = [[InlineKeyboardButton("🔗 Full View", url=RESULT_URL), InlineKeyboardButton("🗑️ Delete", callback_data="clear")]]
+        return await query.message.reply_text(res_msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.MARKDOWN)
+
+    # Re-fetch SIS soup for Attendance/Fee
+    soup = await fetch_soup(SIS_URL.format(id=b64_encode(reg)))
+    if not soup: return
 
     if query.data == "att":
-        full_text = soup.get_text(separator=" ")
-        match = re.search(r"Attendance\s*(\d+\.\d+)", full_text, re.I)
-        val = match.group(1) if match else "N/A"
+        val = re.search(r"Attendance\s*(\d+\.\d+)", soup.get_text(), re.I)
         kb = [[InlineKeyboardButton("🗑️ Delete", callback_data="clear")]]
-        await query.message.reply_text(f"📈 *ATTENDANCE*\nID: `{reg}`\n📊 Percentage: `{val}%`", reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.MARKDOWN)
+        await query.message.reply_text(f"📈 *ATTENDANCE*\n📊 Percentage: `{val.group(1) if val else 'N/A'}%`", reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.MARKDOWN)
     
     elif query.data == "fee":
         fee_report = f"💰 *FEE LEDGER*\n━━━━━━━━━━━━━━━\n"
-        year_patterns = ["I-BTECH", "II-BTECH", "III-BTECH", "FIN-BTECH"]
-        found_data = False
-        for year_code in year_patterns:
-            header = soup.find(string=re.compile(f"FEE DETAILS\s*\({year_code}\)", re.I))
-            if header:
-                data_row = header.find_parent('tr').find_next_sibling('tr')
-                if data_row:
-                    row_text = data_row.get_text(separator=" ")
-                    paid = re.search(r"TOTAL PAID AMOUNT\s*:\s*([\d,.]+)", row_text)
-                    bal = re.search(r"TOTAL BALANCE AMOUNT\s*:\s*([\d,.]+)", row_text)
-                    fee_report += f"📅 *{year_code}*\n ├ Paid: `₹{paid.group(1) if paid else '0'}`\n └ Bal: `₹{bal.group(1) if bal else '0'}`\n\n"
-                    found_data = True
-        
+        for y in ["I-BTECH", "II-BTECH", "III-BTECH", "FIN-BTECH"]:
+            h = soup.find(string=re.compile(f"FEE DETAILS\s*\({y}\)", re.I))
+            if h:
+                row = h.find_parent('tr').find_next_sibling('tr').get_text(separator=" ")
+                p = re.search(r"TOTAL PAID AMOUNT\s*:\s*([\d,.]+)", row)
+                b = re.search(r"TOTAL BALANCE AMOUNT\s*:\s*([\d,.]+)", row)
+                fee_report += f"📅 *{y}*\n ├ Paid: `₹{p.group(1) if p else '0'}`\n └ Bal: `₹{b.group(1) if b else '0'}`\n\n"
         kb = [[InlineKeyboardButton("🗑️ Delete", callback_data="clear")]]
-        await query.message.reply_text(fee_report if found_data else "⚠️ No fee data.", reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.MARKDOWN)
+        await query.message.reply_text(fee_report, reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.MARKDOWN)
 
 if __name__ == "__main__":
     app = ApplicationBuilder().token(TOKEN).build()
