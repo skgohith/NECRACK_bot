@@ -35,6 +35,7 @@ TOKEN = "8491426723:AAECUa6FEZbRy1ZKsJ7FWGA43QO3xIw5cHE"
 SIS_URL = "http://115.241.194.20/sis/Examination/Reports/StudentSearchHTMLReport_student.aspx?R={id}&T=-8584723613578166740"
 RESULT_BASE_URL = "https://narayanagroup.co.in/patient/EngAutonomousReport.aspx/{id}"
 
+# Added verify=False to bypass common "Portal Offline" SSL errors
 limits = httpx.Limits(max_keepalive_connections=10, max_connections=20)
 async_client = httpx.AsyncClient(timeout=30.0, limits=limits, follow_redirects=True, verify=False)
 
@@ -51,8 +52,12 @@ async def fetch_soup(url):
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0"}
     try:
         r = await async_client.get(url, headers=headers)
-        return BeautifulSoup(r.text, 'html.parser') if r.status_code == 200 else None
-    except: return None
+        if r.status_code == 200:
+            return BeautifulSoup(r.text, 'html.parser')
+        return None
+    except Exception as e:
+        print(f"Fetch error: {e}")
+        return None
 
 # --- 🤖 BOT HANDLERS ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -64,21 +69,23 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     encoded_id = b64_encode(reg)
     msg = await update.message.reply_text("⚡ *Syncing Engine...*")
     
-    results = await asyncio.gather(
-        fetch_soup(SIS_URL.format(id=encoded_id)),
-        fetch_soup(RESULT_BASE_URL.format(id=encoded_id))
-    )
-    soup_sis, _ = results
+    soup_sis = await fetch_soup(SIS_URL.format(id=encoded_id))
     await msg.delete()
 
-    if not soup_sis: return await update.message.reply_text("❌ *Portal Offline*")
+    if not soup_sis: 
+        return await update.message.reply_text("❌ *Portal Offline*\n_Server is not responding or session expired._", parse_mode=ParseMode.MARKDOWN)
 
-    name_target = soup_sis.find(string=re.compile("NAME", re.I))
-    name = name_target.find_parent('td').find_next_sibling('td').get_text(strip=True) if name_target else "N/A"
+    # Improved Name Extraction to prevent "NoneType" errors
+    name = "Not Found"
+    name_tag = soup_sis.find(string=re.compile("NAME", re.I))
+    if name_tag:
+        parent_td = name_tag.find_parent('td')
+        if parent_td:
+            next_td = parent_td.find_next_sibling('td')
+            if next_td: name = next_td.get_text(strip=True)
 
     profile_text = f"👤 *STUDENT PROFILE*\n━━━━━━━━━━━━━━━\n📛 *NAME:* `{name}`\n🆔 *ID:* `{reg}`\n"
     
-    # --- UPDATED KEYBOARD WITH PORTAL LINKS ---
     kb = [
         [InlineKeyboardButton("📊 Quick Attendance", callback_data="att"), InlineKeyboardButton("🏆 Quick Results", callback_data="res")],
         [InlineKeyboardButton("💰 Fee Ledger", callback_data="fee")],
@@ -92,9 +99,11 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     reg = context.user_data.get("reg")
+    if not reg: return await query.answer("Session Expired. Please re-enter ID.")
+    
     if query.data == "clear": return await query.message.delete()
     
-    await query.answer("🚀 Processing Request...")
+    await query.answer("🚀 Ghost Engine Processing...")
     encoded_id = b64_encode(reg)
 
     if query.data == "res":
@@ -104,7 +113,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         full_text = soup.get_text(separator=" ")
         sgpa = re.search(r"SGPA\s*[:]?\s*(\d+\.\d+)", full_text, re.I)
         
-        transcript = "```\nSUB     | GRD | RES\n--------|-----|-----\n"
+        # --- ENHANCED TABLE ALIGNMENT ---
+        transcript = "```\n+---------+-----+-----+\n| SUB     | GRD | RES |\n+---------+-----+-----+\n"
         backlogs = 0
         table = soup.find('table')
         
@@ -117,6 +127,53 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     if not full_name or "SUBJECT" in full_name.upper(): continue
                     
                     short_name = get_acronym(full_name)
+                    res_status = "P"
+                    if grade in ["F", "AB", "FAIL"]:
+                        res_status = "F"
+                        backlogs += 1
+                    
+                    # Exact Padding logic
+                    transcript += f"| {short_name.ljust(7)} | {grade.ljust(3)} | {res_status.ljust(3)} |\n"
+            
+            transcript += "+---------+-----+-----+```" 
+
+        res_msg = (
+            f"🏆 *RESULTS:* `{reg}`\n"
+            f"━━━━━━━━━━━━━━━\n"
+            f"📈 SGPA: `{sgpa.group(1) if sgpa else 'N/A'}` | 📉 BL: `{backlogs}`\n\n"
+            f"📖 *TRANSCRIPT:*\n{transcript if backlogs >= 0 else '⚠️ No records found.'}"
+        )
+        return await query.message.reply_text(res_msg, parse_mode=ParseMode.MARKDOWN)
+
+    soup = await fetch_soup(SIS_URL.format(id=encoded_id))
+    if not soup: return await query.message.reply_text("❌ Portal Offline.")
+
+    if query.data == "att":
+        val = re.search(r"Attendance\s*(\d+\.\d+)", soup.get_text(), re.I)
+        await query.message.reply_text(f"📊 *ATTENDANCE:* `{val.group(1) if val else 'N/A'}%`")
+    elif query.data == "fee":
+        fee_report = "💰 *FEE LEDGER*\n━━━━━━━━━━━━━━━\n"
+        for y in ["I-BTECH", "II-BTECH", "III-BTECH", "FIN-BTECH"]:
+            h = soup.find(string=re.compile(f"FEE DETAILS\s*\({y}\)", re.I))
+            if h:
+                row = h.find_parent('tr').find_next_sibling('tr').get_text(separator=" ")
+                p = re.search(r"TOTAL PAID AMOUNT\s*:\s*([\d,.]+)", row)
+                b = re.search(r"TOTAL BALANCE AMOUNT\s*:\s*([\d,.]+)", row)
+                fee_report += f"📅 *{y}*: P: `₹{p.group(1) if p else '0'}` | B: `₹{b.group(1) if b else '0'}`\n"
+        await query.message.reply_text(fee_report, parse_mode=ParseMode.MARKDOWN)
+
+if __name__ == "__main__":
+    app = ApplicationBuilder().token(TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_input))
+    app.add_handler(CallbackQueryHandler(button_handler))
+    app.run_polling(drop_pending_updates=True)
+                if len(cols) >= 4:
+                    full_name = cols[2].get_text(strip=True)
+                    grade = cols[3].get_text(strip=True).upper()
+                    if not full_name or "SUBJECT" in full_name.upper(): continue
+                    
+                    short_name = get_acronym(full_name)
                     res_status = "PASS"
                     if grade in ["F", "AB", "FAIL"]:
                         res_status = "FAIL"
@@ -200,4 +257,5 @@ if __name__ == "__main__":
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_input))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.run_polling(drop_pending_updates=True)
+
 
