@@ -41,13 +41,11 @@ async_client = httpx.AsyncClient(timeout=30.0, limits=limits, follow_redirects=T
 def b64_encode(text):
     return base64.b64encode(text.encode('utf-8')).decode('utf-8')
 
-# Helper to shorten subject names (DLD, DBMS, etc)
-def shorten_sub(name):
-    if len(name) <= 12: return name
-    # Logic to take first letter of each word
-    return "".join([word[0] for word in name.split() if word[0].isupper()])
-
-# --- 🔍 TURBO DATA ENGINE ---
+def get_acronym(name):
+    excluded = ['AND', 'THE', 'OF', 'IN', 'FOR', 'WITH', 'BY', 'LAB', 'LABORATORY']
+    words = [word for word in re.split(r'[\s\-]+', name) if word.upper() not in excluded]
+    if len(words) == 1: return words[0][:4].upper()
+    return "".join([word[0] for word in words if word]).upper()
 
 async def fetch_soup(url):
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0"}
@@ -65,14 +63,13 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reg = update.message.text.strip().upper()
     context.user_data["reg"] = reg
     encoded_id = b64_encode(reg)
-    msg = await update.message.reply_text("⚡ *Engine Syncing...*")
+    msg = await update.message.reply_text("⚡ *Syncing Engine...*")
     
-    # Concurrent fetch for speed
     results = await asyncio.gather(
         fetch_soup(SIS_URL.format(id=encoded_id)),
         fetch_soup(RESULT_BASE_URL.format(id=encoded_id))
     )
-    soup_sis, soup_res = results
+    soup_sis, _ = results
     await msg.delete()
 
     if not soup_sis: return await update.message.reply_text("❌ *Portal Offline*")
@@ -83,14 +80,14 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     profile_text = f"👤 *STUDENT PROFILE*\n━━━━━━━━━━━━━━━\n📛 *NAME:* `{name}`\n🆔 *ID:* `{reg}`\n"
     kb = [[InlineKeyboardButton("📊 Attendance", callback_data="att"), InlineKeyboardButton("🏆 Results", callback_data="res")],
           [InlineKeyboardButton("💰 Fee Ledger", callback_data="fee")],
-          [InlineKeyboardButton("🧹 Clear", callback_data="clear")]]
+          [InlineKeyboardButton("🧹 Clear Dashboard", callback_data="clear")]]
     await update.message.reply_text(profile_text, reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.MARKDOWN)
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     reg = context.user_data.get("reg")
     if query.data == "clear": return await query.message.delete()
-    await query.answer("🚀 Loading...")
+    await query.answer("🚀 Fetching...")
     encoded_id = b64_encode(reg)
 
     if query.data == "res":
@@ -107,38 +104,39 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for row in table.find_all('tr')[1:]:
                 cols = row.find_all(['td', 'th'])
                 if len(cols) >= 4:
-                    sub = shorten_sub(cols[2].get_text(strip=True))
+                    full_name = cols[2].get_text(strip=True)
                     grade = cols[3].get_text(strip=True).upper()
+                    if not full_name or "SUBJECT" in full_name.upper(): continue
                     
-                    status = "✅ P" # Pass
+                    short_name = get_acronym(full_name)
+                    status = "PASS"
                     if grade in ["F", "AB", "FAIL"]:
-                        status = "❌ F" # Fail
+                        status = "FAIL"
                         backlogs += 1
                     
-                    if sub and grade and "SUBJECT" not in sub.upper():
-                        transcript += f" ┕ {status} | `{sub}`\n" # Moved status to front
+                    # FORMAT: SUB | GRADE | STATUS
+                    transcript += f" ┕ `{short_name.ljust(5)}` | `{grade.center(3)}` | **{status}**\n"
 
         res_msg = (
             f"🏆 *RESULTS:* `{reg}`\n"
             f"━━━━━━━━━━━━━━━\n"
             f"📈 SGPA: `{sgpa.group(1) if sgpa else 'N/A'}` | 📉 BL: `{backlogs}`\n\n"
-            f"📖 *TRANSCRIPT:*\n{transcript if transcript else '⚠️ No data.'}"
+            f"📖 *TRANSCRIPT (SUB | GRD | RES):*\n{transcript if transcript else '⚠️ No records.'}"
         )
         return await query.message.reply_text(res_msg, parse_mode=ParseMode.MARKDOWN)
 
-    # Standard SIS logic
+    # Attendance/Fee
     soup = await fetch_soup(SIS_URL.format(id=encoded_id))
     if query.data == "att":
         val = re.search(r"Attendance\s*(\d+\.\d+)", soup.get_text(), re.I)
-        await query.message.reply_text(f"📊 *ATTENDANCE:* `{val.group(1) if val else 'N/A'}%`", parse_mode=ParseMode.MARKDOWN)
+        await query.message.reply_text(f"📊 *ATTENDANCE:* `{val.group(1) if val else 'N/A'}%`")
     elif query.data == "fee":
         fee_report = "💰 *FEE LEDGER*\n━━━━━━━━━━━━━━━\n"
         for y in ["I-BTECH", "II-BTECH", "III-BTECH", "FIN-BTECH"]:
             h = soup.find(string=re.compile(f"FEE DETAILS\s*\({y}\)", re.I))
             if h:
                 row = h.find_parent('tr').find_next_sibling('tr').get_text(separator=" ")
-                p = re.search(r"TOTAL PAID AMOUNT\s*:\s*([\d,.]+)", row)
-                b = re.search(r"TOTAL BALANCE AMOUNT\s*:\s*([\d,.]+)", row)
+                p = re.search(r"TOTAL PAID AMOUNT\s*:\s*([\d,.]+)", row); b = re.search(r"TOTAL BALANCE AMOUNT\s*:\s*([\d,.]+)", row)
                 fee_report += f"📅 *{y}*: P: `₹{p.group(1) if p else '0'}` | B: `₹{b.group(1) if b else '0'}`\n"
         await query.message.reply_text(fee_report, parse_mode=ParseMode.MARKDOWN)
 
