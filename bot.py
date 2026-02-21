@@ -14,7 +14,7 @@ from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 )
 
-# --- 🛰️ 24/7 HEARTBEAT ---
+# --- 🛰️ 24/7 HEARTBEAT FOR KOYEB ---
 def run_heartbeat():
     port = int(os.environ.get("PORT", 8080))
     class HealthCheckHandler(http.server.SimpleHTTPRequestHandler):
@@ -36,36 +36,35 @@ TOKEN = "8491426723:AAECUa6FEZbRy1ZKsJ7FWGA43QO3xIw5cHE"
 SIS_URL = "http://115.241.194.20/sis/Examination/Reports/StudentSearchHTMLReport_student.aspx?R={id}&T=-8584723613578166740"
 RESULT_BASE_URL = "https://narayanagroup.co.in/patient/EngAutonomousReport.aspx/{id}"
 
-# Reusable Client Session for high-speed connection pooling
+# Speed Optimization: Connection Pooling
 limits = httpx.Limits(max_keepalive_connections=10, max_connections=20)
 async_client = httpx.AsyncClient(timeout=30.0, limits=limits, follow_redirects=True, verify=False)
 
 def b64_encode(text):
     return base64.b64encode(text.encode('utf-8')).decode('utf-8')
 
-# --- 🔍 TURBO DATA ENGINE ---
+# --- 🔍 FAST DATA ENGINE ---
 
 async def fetch_soup(url):
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"}
     try:
         r = await async_client.get(url, headers=headers)
-        return BeautifulSoup(r.text, 'lxml') if r.status_code == 200 else None # Using lxml for faster parsing
+        return BeautifulSoup(r.text, 'html.parser') if r.status_code == 200 else None
     except: return None
 
 # --- 🤖 BOT HANDLERS ---
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🛰️ *NECRACK GHOST v16*\nEnter Registration Number:")
+    await update.message.reply_text("🛰️ *NECRACK GHOST v16*\nDeveloped by @skgohith\n\nEnter Registration Number:")
 
 async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reg = update.message.text.strip().upper()
     context.user_data["reg"] = reg
-    
-    # Concurrent Fetch: Fetch Profile and Results in parallel to save time
     encoded_id = b64_encode(reg)
-    msg = await update.message.reply_text("⚡ *Engine Overclocked: Fetching Data...*")
     
-    # Run requests simultaneously
+    msg = await update.message.reply_text("⚡ *Engine Overclocked: Syncing...*")
+    
+    # Concurrent fetching for maximum speed
     results = await asyncio.gather(
         fetch_soup(SIS_URL.format(id=encoded_id)),
         fetch_soup(RESULT_BASE_URL.format(id=encoded_id))
@@ -75,18 +74,23 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await msg.delete()
 
     if not soup_sis:
-        return await update.message.reply_text("❌ Portal Offline.")
+        return await update.message.reply_text("❌ *Portal Offline*")
 
-    # Fast Extraction
     name_target = soup_sis.find(string=re.compile("NAME", re.I))
     name = name_target.find_parent('td').find_next_sibling('td').get_text(strip=True) if name_target else "N/A"
 
-    profile_text = f"👤 *STUDENT PROFILE*\n━━━━━━━━━━━━━━━\n📛 *NAME:* `{name}`\n🆔 *ID:* `{reg}`\n"
+    profile_text = (
+        f"👤 *STUDENT PROFILE*\n"
+        f"━━━━━━━━━━━━━━━\n"
+        f"📛 *NAME:* `{name}`\n"
+        f"🆔 *ID:* `{reg}`\n"
+    )
     
-    keyboard = [[InlineKeyboardButton("📊 Attendance", callback_data="att"), InlineKeyboardButton("🏆 Results", callback_data="res")],
-                [InlineKeyboardButton("💰 Fee Ledger", callback_data="fee")],
-                [InlineKeyboardButton("🧹 Clear Dashboard", callback_data="clear")]]
-    
+    keyboard = [
+        [InlineKeyboardButton("📊 Attendance", callback_data="att"), InlineKeyboardButton("🏆 Results", callback_data="res")],
+        [InlineKeyboardButton("💰 Fee Ledger", callback_data="fee")],
+        [InlineKeyboardButton("🧹 Clear Dashboard", callback_data="clear")]
+    ]
     await update.message.reply_text(profile_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode=ParseMode.MARKDOWN)
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -94,7 +98,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reg = context.user_data.get("reg")
     if query.data == "clear": return await query.message.delete()
     
-    await query.answer("🚀 Ghost Speed Active...")
+    await query.answer("🚀 Ghost Speed...")
     encoded_id = b64_encode(reg)
 
     if query.data == "res":
@@ -111,21 +115,37 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for row in table.find_all('tr')[1:]:
                 cols = row.find_all(['td', 'th'])
                 if len(cols) >= 4:
-                    sub, grade = cols[2].get_text(strip=True), cols[3].get_text(strip=True)
-                    if grade in ["F", "AB"]: backlogs += 1
-                    transcript += f" ┕ `{sub}`: {grade}\n"
+                    sub = cols[2].get_text(strip=True)
+                    grade = cols[3].get_text(strip=True).upper()
+                    
+                    # Logic for PASS/FAIL text format
+                    status = "✅ PASS"
+                    if grade in ["F", "AB", "FAIL"]:
+                        status = "❌ FAIL"
+                        backlogs += 1
+                    
+                    if sub and grade and "SUBJECT" not in sub.upper():
+                        transcript += f" ┕ `{sub}`: **{status}**\n"
 
-        res_msg = f"🏆 *ACADEMIC RESULTS*\n━━━━━━━━━━━━━━━\n🆔 ID: `{reg}`\n📈 SGPA: `{sgpa.group(1) if sgpa else 'N/A'}`\n📉 Backlogs: `{backlogs}`\n\n✅ *TRANSCRIPT:*\n{transcript}"
+        res_msg = (
+            f"🏆 *ACADEMIC RESULTS*\n"
+            f"━━━━━━━━━━━━━━━\n"
+            f"🆔 ID: `{reg}`\n"
+            f"📈 SGPA: `{sgpa.group(1) if sgpa else 'N/A'}`\n"
+            f"📉 Backlogs: `{backlogs}`\n\n"
+            f"✅ *TRANSCRIPT:*\n"
+            f"{transcript if transcript else '⚠️ No data found.'}"
+        )
         return await query.message.reply_text(res_msg, parse_mode=ParseMode.MARKDOWN)
 
-    # Attendance/Fee Ledger
+    # Fast fetch for SIS data
     soup = await fetch_soup(SIS_URL.format(id=encoded_id))
     if query.data == "att":
         val = re.search(r"Attendance\s*(\d+\.\d+)", soup.get_text(), re.I)
         await query.message.reply_text(f"📈 *ATTENDANCE*\n📊 Percentage: `{val.group(1) if val else 'N/A'}%`", parse_mode=ParseMode.MARKDOWN)
+    
     elif query.data == "fee":
         fee_report = "💰 *FEE LEDGER*\n━━━━━━━━━━━━━━━\n"
-        # Optimized string search for fee details
         for y in ["I-BTECH", "II-BTECH", "III-BTECH", "FIN-BTECH"]:
             h = soup.find(string=re.compile(f"FEE DETAILS\s*\({y}\)", re.I))
             if h:
@@ -140,4 +160,4 @@ if __name__ == "__main__":
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_input))
     app.add_handler(CallbackQueryHandler(button_handler))
-    app.run_polling()
+    app.run_polling(drop_pending_updates=True)
