@@ -6,7 +6,6 @@ import threading
 import re
 import httpx
 import os
-import random
 from bs4 import BeautifulSoup
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
@@ -45,7 +44,7 @@ def b64_encode(text):
 def get_acronym(name):
     excluded = ['AND', 'THE', 'OF', 'IN', 'FOR', 'WITH', 'BY', 'LAB', 'LABORATORY']
     words = [word for word in re.split(r'[\s\-]+', name) if word.upper() not in excluded]
-    if len(words) == 1: return words[0][:5].upper()
+    if len(words) == 1: return words[0][:6].upper()
     return "".join([word[0] for word in words if word]).upper()
 
 async def fetch_soup(url):
@@ -57,7 +56,7 @@ async def fetch_soup(url):
 
 # --- 🤖 BOT HANDLERS ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🛰️ *NECRACK GHOST v16*\n\nEnter Registration Number:")
+    await update.message.reply_text("🛰️ *NECRACK GHOST v16*\nEnter Registration Number:")
 
 async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reg = update.message.text.strip().upper()
@@ -87,7 +86,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     reg = context.user_data.get("reg")
     if query.data == "clear": return await query.message.delete()
-    await query.answer("🚀 Speed Engine Active...")
+    await query.answer("🚀 Ghost Speed Active...")
     encoded_id = b64_encode(reg)
 
     if query.data == "res":
@@ -97,8 +96,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         full_text = soup.get_text(separator=" ")
         sgpa = re.search(r"SGPA\s*[:]?\s*(\d+\.\d+)", full_text, re.I)
         
-        # Table Header
-        transcript = "```\nSUB   | GRD | RES\n------|-----|-----\n"
+        # --- FIXED ALIGNMENT LOGIC ---
+        # Headers: SUB (7 chars) | GRD (4 chars) | RES
+        transcript = "```\nSUB     | GRD | RES\n--------|-----|-----\n"
         backlogs = 0
         table = soup.find('table')
         
@@ -110,6 +110,47 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     grade = cols[3].get_text(strip=True).upper()
                     if not full_name or "SUBJECT" in full_name.upper(): continue
                     
+                    short_name = get_acronym(full_name)
+                    res_status = "PASS"
+                    if grade in ["F", "AB", "FAIL"]:
+                        res_status = "FAIL"
+                        backlogs += 1
+                    
+                    # Aligns data exactly under the headers
+                    transcript += f"{short_name.ljust(7)} | {grade.ljust(3)} | {res_status}\n"
+            
+            transcript += "```" 
+
+        res_msg = (
+            f"🏆 *RESULTS:* `{reg}`\n"
+            f"━━━━━━━━━━━━━━━\n"
+            f"📈 SGPA: `{sgpa.group(1) if sgpa else 'N/A'}` | 📉 BL: `{backlogs}`\n\n"
+            f"📖 *TRANSCRIPT:*\n{transcript if len(transcript) > 30 else '⚠️ No records found.'}"
+        )
+        return await query.message.reply_text(res_msg, parse_mode=ParseMode.MARKDOWN)
+
+    # Standard SIS logic for Attendance/Fee
+    soup = await fetch_soup(SIS_URL.format(id=encoded_id))
+    if query.data == "att":
+        val = re.search(r"Attendance\s*(\d+\.\d+)", soup.get_text(), re.I)
+        await query.message.reply_text(f"📊 *ATTENDANCE:* `{val.group(1) if val else 'N/A'}%`", parse_mode=ParseMode.MARKDOWN)
+    elif query.data == "fee":
+        fee_report = "💰 *FEE LEDGER*\n━━━━━━━━━━━━━━━\n"
+        for y in ["I-BTECH", "II-BTECH", "III-BTECH", "FIN-BTECH"]:
+            h = soup.find(string=re.compile(f"FEE DETAILS\s*\({y}\)", re.I))
+            if h:
+                row = h.find_parent('tr').find_next_sibling('tr').get_text(separator=" ")
+                p = re.search(r"TOTAL PAID AMOUNT\s*:\s*([\d,.]+)", row)
+                b = re.search(r"TOTAL BALANCE AMOUNT\s*:\s*([\d,.]+)", row)
+                fee_report += f"📅 *{y}*: P: `₹{p.group(1) if p else '0'}` | B: `₹{b.group(1) if b else '0'}`\n"
+        await query.message.reply_text(fee_report, parse_mode=ParseMode.MARKDOWN)
+
+if __name__ == "__main__":
+    app = ApplicationBuilder().token(TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_input))
+    app.add_handler(CallbackQueryHandler(button_handler))
+    app.run_polling(drop_pending_updates=True)
                     short_name = get_acronym(full_name)
                     res_status = "P"
                     if grade in ["F", "AB", "FAIL"]:
@@ -187,4 +228,5 @@ if __name__ == "__main__":
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_input))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.run_polling(drop_pending_updates=True)
+
 
