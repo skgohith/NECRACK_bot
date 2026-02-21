@@ -44,7 +44,6 @@ def b64_encode(text):
 def get_acronym(name):
     excluded = ['AND', 'THE', 'OF', 'IN', 'FOR', 'WITH', 'BY', 'LAB', 'LABORATORY']
     words = [word for word in re.split(r'[\s\-]+', name) if word.upper() not in excluded]
-    # Acronym logic for subjects like IIJTSP or MAD
     if len(words) == 1: return words[0][:6].upper()
     return "".join([word[0] for word in words if word]).upper()
 
@@ -79,7 +78,7 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     profile_text = f"👤 *STUDENT PROFILE*\n━━━━━━━━━━━━━━━\n📛 *NAME:* `{name}`\n🆔 *ID:* `{reg}`\n"
     
-    # --- NEW PORTAL BUTTONS ADDED HERE ---
+    # --- UPDATED KEYBOARD WITH PORTAL LINKS ---
     kb = [
         [InlineKeyboardButton("📊 Quick Attendance", callback_data="att"), InlineKeyboardButton("🏆 Quick Results", callback_data="res")],
         [InlineKeyboardButton("💰 Fee Ledger", callback_data="fee")],
@@ -87,13 +86,15 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("🌐 Result Portal", url=RESULT_BASE_URL.format(id=encoded_id))],
         [InlineKeyboardButton("🧹 Clear Dashboard", callback_data="clear")]
     ]
+    
     await update.message.reply_text(profile_text, reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.MARKDOWN)
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     reg = context.user_data.get("reg")
     if query.data == "clear": return await query.message.delete()
-    await query.answer("🚀 Formatting Table...")
+    
+    await query.answer("🚀 Processing Request...")
     encoded_id = b64_encode(reg)
 
     if query.data == "res":
@@ -103,8 +104,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         full_text = soup.get_text(separator=" ")
         sgpa = re.search(r"SGPA\s*[:]?\s*(\d+\.\d+)", full_text, re.I)
         
-        # --- FIXED ALIGNMENT LOGIC ---
-        # Headers: SUB (7 spaces) | GRD (3 spaces) | RES
         transcript = "```\nSUB     | GRD | RES\n--------|-----|-----\n"
         backlogs = 0
         table = soup.find('table')
@@ -123,50 +122,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         res_status = "FAIL"
                         backlogs += 1
                     
-                    # ljust ensures the dividers (|) never move
-                    transcript += f"{short_name.ljust(7)} | {grade.ljust(3)} | {res_status}\n"
-            
-            transcript += "```" 
-
-        res_msg = (
-            f"🏆 *RESULTS:* `{reg}`\n"
-            f"━━━━━━━━━━━━━━━\n"
-            f"📈 SGPA: `{sgpa.group(1) if sgpa else 'N/A'}` | 📉 BL: `{backlogs}`\n\n"
-            f"📖 *TRANSCRIPT:*\n{transcript}"
-        )
-        return await query.message.reply_text(res_msg, parse_mode=ParseMode.MARKDOWN)
-
-    # Standard Logic
-    soup = await fetch_soup(SIS_URL.format(id=encoded_id))
-    if query.data == "att":
-        val = re.search(r"Attendance\s*(\d+\.\d+)", soup.get_text(), re.I)
-        await query.message.reply_text(f"📊 *ATTENDANCE:* `{val.group(1) if val else 'N/A'}%`", parse_mode=ParseMode.MARKDOWN)
-    elif query.data == "fee":
-        fee_report = "💰 *FEE LEDGER*\n━━━━━━━━━━━━━━━\n"
-        for y in ["I-BTECH", "II-BTECH", "III-BTECH", "FIN-BTECH"]:
-            h = soup.find(string=re.compile(f"FEE DETAILS\s*\({y}\)", re.I))
-            if h:
-                row = h.find_parent('tr').find_next_sibling('tr').get_text(separator=" ")
-                p = re.search(r"TOTAL PAID AMOUNT\s*:\s*([\d,.]+)", row)
-                b = re.search(r"TOTAL BALANCE AMOUNT\s*:\s*([\d,.]+)", row)
-                fee_report += f"📅 *{y}*: P: `₹{p.group(1) if p else '0'}` | B: `₹{b.group(1) if b else '0'}`\n"
-        await query.message.reply_text(fee_report, parse_mode=ParseMode.MARKDOWN)
-
-if __name__ == "__main__":
-    app = ApplicationBuilder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_input))
-    app.add_handler(CallbackQueryHandler(button_handler))
-    app.run_polling(drop_pending_updates=True)
-                    
-                    short_name = get_acronym(full_name)
-                    res_status = "PASS"
-                    if grade in ["F", "AB", "FAIL"]:
-                        res_status = "FAIL"
-                        backlogs += 1
-                    
-                    # ljust(7) pads the subject to 7 spaces exactly
-                    # ljust(3) pads the grade to 3 spaces exactly
                     transcript += f"{short_name.ljust(7)} | {grade.ljust(3)} | {res_status}\n"
             
             transcript += "```" 
@@ -179,7 +134,6 @@ if __name__ == "__main__":
         )
         return await query.message.reply_text(res_msg, parse_mode=ParseMode.MARKDOWN)
 
-    # Standard SIS logic for Attendance/Fee
     soup = await fetch_soup(SIS_URL.format(id=encoded_id))
     if query.data == "att":
         val = re.search(r"Attendance\s*(\d+\.\d+)", soup.get_text(), re.I)
@@ -201,48 +155,3 @@ if __name__ == "__main__":
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_input))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.run_polling(drop_pending_updates=True)
-                    
-                    short_name = get_acronym(full_name)
-                    res_status = "PASS"
-                    if grade in ["F", "AB", "FAIL"]:
-                        res_status = "FAIL"
-                        backlogs += 1
-                    
-                    # ljust(7) pads the subject to 7 spaces exactly
-                    # ljust(3) pads the grade to 3 spaces exactly
-                    transcript += f"{short_name.ljust(7)} | {grade.ljust(3)} | {res_status}\n"
-            
-            transcript += "```" 
-
-        res_msg = (
-            f"🏆 *RESULTS:* `{reg}`\n"
-            f"━━━━━━━━━━━━━━━\n"
-            f"📈 SGPA: `{sgpa.group(1) if sgpa else 'N/A'}` | 📉 BL: `{backlogs}`\n\n"
-            f"📖 *TRANSCRIPT:*\n{transcript if len(transcript) > 30 else '⚠️ No records found.'}"
-        )
-        return await query.message.reply_text(res_msg, parse_mode=ParseMode.MARKDOWN)
-
-    # Standard SIS logic for Attendance/Fee
-    soup = await fetch_soup(SIS_URL.format(id=encoded_id))
-    if query.data == "att":
-        val = re.search(r"Attendance\s*(\d+\.\d+)", soup.get_text(), re.I)
-        await query.message.reply_text(f"📊 *ATTENDANCE:* `{val.group(1) if val else 'N/A'}%`", parse_mode=ParseMode.MARKDOWN)
-    elif query.data == "fee":
-        fee_report = "💰 *FEE LEDGER*\n━━━━━━━━━━━━━━━\n"
-        for y in ["I-BTECH", "II-BTECH", "III-BTECH", "FIN-BTECH"]:
-            h = soup.find(string=re.compile(f"FEE DETAILS\s*\({y}\)", re.I))
-            if h:
-                row = h.find_parent('tr').find_next_sibling('tr').get_text(separator=" ")
-                p = re.search(r"TOTAL PAID AMOUNT\s*:\s*([\d,.]+)", row)
-                b = re.search(r"TOTAL BALANCE AMOUNT\s*:\s*([\d,.]+)", row)
-                fee_report += f"📅 *{y}*: P: `₹{p.group(1) if p else '0'}` | B: `₹{b.group(1) if b else '0'}`\n"
-        await query.message.reply_text(fee_report, parse_mode=ParseMode.MARKDOWN)
-
-if __name__ == "__main__":
-    app = ApplicationBuilder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_input))
-    app.add_handler(CallbackQueryHandler(button_handler))
-    app.run_polling(drop_pending_updates=True)
-
-
