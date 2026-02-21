@@ -32,8 +32,8 @@ threading.Thread(target=run_heartbeat, daemon=True).start()
 
 # --- ⚙️ CONFIG ---
 TOKEN = "8491426723:AAECUa6FEZbRy1ZKsJ7FWGA43QO3xIw5cHE"
-SIS_URL = "[http://115.241.194.20/sis/Examination/Reports/StudentSearchHTMLReport_student.aspx?R=](http://115.241.194.20/sis/Examination/Reports/StudentSearchHTMLReport_student.aspx?R=){id}&T=-8584723613578166740"
-RESULT_BASE_URL = "[https://narayanagroup.co.in/patient/EngAutonomousReport.aspx/](https://narayanagroup.co.in/patient/EngAutonomousReport.aspx/){id}"
+SIS_URL = "http://115.241.194.20/sis/Examination/Reports/StudentSearchHTMLReport_student.aspx?R={id}&T=-8584723613578166740"
+RESULT_BASE_URL = "https://narayanagroup.co.in/patient/EngAutonomousReport.aspx/{id}"
 
 limits = httpx.Limits(max_keepalive_connections=10, max_connections=20)
 async_client = httpx.AsyncClient(timeout=30.0, limits=limits, follow_redirects=True, verify=False)
@@ -42,7 +42,6 @@ def b64_encode(text):
     return base64.b64encode(text.encode('utf-8')).decode('utf-8')
 
 def get_acronym(name):
-    # Shortens subject names based on uppercase letters (e.g., Mobile Application Development -> MAD)
     excluded = ['AND', 'THE', 'OF', 'IN', 'FOR', 'WITH', 'BY', 'LAB', 'LABORATORY']
     words = [word for word in re.split(r'[\s\-]+', name) if word.upper() not in excluded]
     if len(words) == 1: return words[0][:6].upper()
@@ -87,7 +86,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     reg = context.user_data.get("reg")
     if query.data == "clear": return await query.message.delete()
-    await query.answer("🚀 Formatting Table...")
+    await query.answer("🚀 Ghost Speed Active...")
     encoded_id = b64_encode(reg)
 
     if query.data == "res":
@@ -97,8 +96,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         full_text = soup.get_text(separator=" ")
         sgpa = re.search(r"SGPA\s*[:]?\s*(\d+\.\d+)", full_text, re.I)
         
-        # --- PRECISE ALIGNMENT LOGIC ---
-        # The backticks ensure a monospace font where every letter has the same width
+        # --- FIXED ALIGNMENT LOGIC ---
+        # Headers: SUB (7 chars) | GRD (4 chars) | RES
         transcript = "```\nSUB     | GRD | RES\n--------|-----|-----\n"
         backlogs = 0
         table = soup.find('table')
@@ -117,8 +116,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         res_status = "FAIL"
                         backlogs += 1
                     
-                    # ljust(7) pads the subject to 7 spaces exactly
-                    # ljust(3) pads the grade to 3 spaces exactly
+                    # Aligns data exactly under the headers
                     transcript += f"{short_name.ljust(7)} | {grade.ljust(3)} | {res_status}\n"
             
             transcript += "```" 
