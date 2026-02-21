@@ -34,8 +34,8 @@ threading.Thread(target=run_heartbeat, daemon=True).start()
 # --- ⚙️ CONFIG ---
 TOKEN = "8491426723:AAECUa6FEZbRy1ZKsJ7FWGA43QO3xIw5cHE"
 SIS_URL = "http://115.241.194.20/sis/Examination/Reports/StudentSearchHTMLReport_student.aspx?R={id}&T=-8584723613578166740"
-# Dynamic result URL based on your specific autonomous portal link
-RESULT_URL = "https://narayanagroup.co.in/patient/EngAutonomousReport.aspx/MjAyMjA5MDl2MGgx"
+# Base URL for the Autonomous Result portal
+RESULT_BASE_URL = "https://narayanagroup.co.in/patient/EngAutonomousReport.aspx/{id}"
 
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
@@ -83,10 +83,15 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     reg = context.user_data.get("reg")
     if query.data == "clear": return await query.message.delete()
-    await query.answer("📡 Fetching Data...")
+    await query.answer("📡 Fetching Live Data...")
 
     if query.data == "res":
-        soup = await fetch_soup(RESULT_URL)
+        # DYNAMIC ENCODING: Encoding the REG NO specifically for the results portal
+        # This prevents the bot from showing "Fake" or same data for everyone
+        encoded_reg = b64_encode(reg) 
+        res_url = RESULT_BASE_URL.format(id=encoded_reg)
+        
+        soup = await fetch_soup(res_url)
         if not soup: return await query.message.reply_text("❌ Results Portal Unreachable.")
         
         full_text = soup.get_text(separator=" ")
@@ -95,18 +100,18 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         transcript = ""
         backlogs = 0
-        # Target the table containing "Subject Name"
         table = soup.find('table', {'id': re.compile(r'GridView|DataGrid|Table', re.I)}) or soup.find('table')
+        
         if table:
             rows = table.find_all('tr')
             for row in rows:
-                cols = row.find_all('td')
-                if len(cols) >= 5: # Ensuring it's a data row
-                    sub_name = cols[2].get_text(strip=True) # Subject Name column
-                    grade = cols[3].get_text(strip=True)    # Grades column
-                    if sub_name and grade and sub_name != "Subject Name":
-                        if grade in ["F", "AB"]: backlogs += 1
-                        # Highlight outstanding grades in bold
+                cols = row.find_all(['td', 'th'])
+                if len(cols) >= 4:
+                    sub_name = cols[2].get_text(strip=True)
+                    grade = cols[3].get_text(strip=True)
+                    # Filter out header text
+                    if sub_name and grade and "Subject" not in sub_name:
+                        if grade in ["F", "AB", "FAIL"]: backlogs += 1
                         display_grade = f"**{grade}**" if grade in ["O", "A+", "A"] else f"({grade})"
                         transcript += f" ┕ `{sub_name}`: {display_grade}\n"
 
@@ -117,12 +122,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"📈 SGPA: `{sgpa}`\n"
             f"📉 Total Backlogs: `{backlogs}`\n\n"
             f"✅ *SEMESTER TRANSCRIPT:*\n"
-            f"{transcript if transcript else '⚠️ No transcript data found.'}\n"
+            f"{transcript if transcript else '⚠️ No transcript data found for this ID.'}\n"
         )
         kb = [[InlineKeyboardButton("🗑️ Delete", callback_data="clear")]]
         return await query.message.reply_text(res_msg, reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.MARKDOWN)
 
-    # Re-fetch SIS soup for Attendance/Fee
+    # ... (Rest of the Attendance and Fee code remains the same)
     soup = await fetch_soup(SIS_URL.format(id=b64_encode(reg)))
     if not soup: return
 
