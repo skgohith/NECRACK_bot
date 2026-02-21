@@ -32,8 +32,8 @@ threading.Thread(target=run_heartbeat, daemon=True).start()
 
 # --- ⚙️ CONFIG ---
 TOKEN = "8491426723:AAECUa6FEZbRy1ZKsJ7FWGA43QO3xIw5cHE"
-SIS_URL = "http://115.241.194.20/sis/Examination/Reports/StudentSearchHTMLReport_student.aspx?R={id}&T=-8584723613578166740"
-RESULT_BASE_URL = "https://narayanagroup.co.in/patient/EngAutonomousReport.aspx/{id}"
+SIS_URL = "[http://115.241.194.20/sis/Examination/Reports/StudentSearchHTMLReport_student.aspx?R=](http://115.241.194.20/sis/Examination/Reports/StudentSearchHTMLReport_student.aspx?R=){id}&T=-8584723613578166740"
+RESULT_BASE_URL = "[https://narayanagroup.co.in/patient/EngAutonomousReport.aspx/](https://narayanagroup.co.in/patient/EngAutonomousReport.aspx/){id}"
 
 limits = httpx.Limits(max_keepalive_connections=10, max_connections=20)
 async_client = httpx.AsyncClient(timeout=30.0, limits=limits, follow_redirects=True, verify=False)
@@ -42,6 +42,7 @@ def b64_encode(text):
     return base64.b64encode(text.encode('utf-8')).decode('utf-8')
 
 def get_acronym(name):
+    # Shortens subject names based on uppercase letters (e.g., Mobile Application Development -> MAD)
     excluded = ['AND', 'THE', 'OF', 'IN', 'FOR', 'WITH', 'BY', 'LAB', 'LABORATORY']
     words = [word for word in re.split(r'[\s\-]+', name) if word.upper() not in excluded]
     if len(words) == 1: return words[0][:6].upper()
@@ -77,24 +78,16 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     name = name_target.find_parent('td').find_next_sibling('td').get_text(strip=True) if name_target else "N/A"
 
     profile_text = f"👤 *STUDENT PROFILE*\n━━━━━━━━━━━━━━━\n📛 *NAME:* `{name}`\n🆔 *ID:* `{reg}`\n"
-    
-    # --- UPDATED KEYBOARD WITH PORTAL LINKS ---
-    kb = [
-        [InlineKeyboardButton("📊 Quick Attendance", callback_data="att"), InlineKeyboardButton("🏆 Quick Results", callback_data="res")],
-        [InlineKeyboardButton("💰 Fee Ledger", callback_data="fee")],
-        [InlineKeyboardButton("🌐 Attendance Portal", url=SIS_URL.format(id=encoded_id))],
-        [InlineKeyboardButton("🌐 Result Portal", url=RESULT_BASE_URL.format(id=encoded_id))],
-        [InlineKeyboardButton("🧹 Clear Dashboard", callback_data="clear")]
-    ]
-    
+    kb = [[InlineKeyboardButton("📊 Attendance", callback_data="att"), InlineKeyboardButton("🏆 Results", callback_data="res")],
+          [InlineKeyboardButton("💰 Fee Ledger", callback_data="fee")],
+          [InlineKeyboardButton("🧹 Clear Dashboard", callback_data="clear")]]
     await update.message.reply_text(profile_text, reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.MARKDOWN)
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     reg = context.user_data.get("reg")
     if query.data == "clear": return await query.message.delete()
-    
-    await query.answer("🚀 Processing Request...")
+    await query.answer("🚀 Formatting Table...")
     encoded_id = b64_encode(reg)
 
     if query.data == "res":
@@ -104,6 +97,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         full_text = soup.get_text(separator=" ")
         sgpa = re.search(r"SGPA\s*[:]?\s*(\d+\.\d+)", full_text, re.I)
         
+        # --- PRECISE ALIGNMENT LOGIC ---
+        # The backticks ensure a monospace font where every letter has the same width
         transcript = "```\nSUB     | GRD | RES\n--------|-----|-----\n"
         backlogs = 0
         table = soup.find('table')
@@ -122,6 +117,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         res_status = "FAIL"
                         backlogs += 1
                     
+                    # ljust(7) pads the subject to 7 spaces exactly
+                    # ljust(3) pads the grade to 3 spaces exactly
                     transcript += f"{short_name.ljust(7)} | {grade.ljust(3)} | {res_status}\n"
             
             transcript += "```" 
@@ -134,6 +131,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return await query.message.reply_text(res_msg, parse_mode=ParseMode.MARKDOWN)
 
+    # Standard SIS logic for Attendance/Fee
     soup = await fetch_soup(SIS_URL.format(id=encoded_id))
     if query.data == "att":
         val = re.search(r"Attendance\s*(\d+\.\d+)", soup.get_text(), re.I)
