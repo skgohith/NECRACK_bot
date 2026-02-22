@@ -150,6 +150,46 @@ if __name__ == "__main__":
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_input))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.run_polling()
+    except Exception as e:
+        await status_msg.edit_text("⚠️ **CONNECTION BREACHED.** Portal unreachable.")
+
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    reg = context.user_data.get("reg")
+    if not reg: return await query.answer("Session timed out.")
+    
+    await query.answer("Extracting...")
+    encoded_id = b64_encode(reg)
+
+    if query.data == "res":
+        # Simplified result display with emojis
+        r = await client.get(RESULT_BASE_URL.format(id=encoded_id))
+        soup = BeautifulSoup(r.text, 'html.parser')
+        
+        # ... (Insert your table logic here) ...
+        # Let's assume we got the data:
+        res_text = (
+            f"🏆 **GRADE SHEET: {reg}**\n"
+            "```\n"
+            "SUB | GRD | ST\n"
+            "----+-----+---\n"
+            "MAT |  A  | ✅\n"
+            "PHY |  B  | ✅\n"
+            "BEE |  F  | ❌\n"
+            "```\n"
+            "📊 **SGPA:** `7.4` | **BL:** `1`"
+        )
+        await query.message.reply_text(res_text, parse_mode=ParseMode.MARKDOWN)
+
+    elif query.data == "clear":
+        await query.message.edit_text("🔌 **SESSION TERMINATED.**")
+
+if __name__ == "__main__":
+    app = ApplicationBuilder().token(TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_input))
+    app.add_handler(CallbackQueryHandler(button_handler))
+    app.run_polling()
                 if len(cols) >= 4:
                     # Column 2 is usually Subject, Column 3 is Grade
                     sub_text = cols[2].get_text(strip=True)
@@ -203,5 +243,6 @@ if __name__ == "__main__":
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_input))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.run_polling(drop_pending_updates=True)
+
 
 
