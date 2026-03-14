@@ -35,7 +35,6 @@ TOKEN = os.environ.get("BOT_TOKEN")
 SIS_URL = "http://115.241.194.20/sis/Examination/Reports/StudentSearchHTMLReport_student.aspx?R={id}&T=-8584723613578166740"
 RESULT_BASE_URL = "https://narayanagroup.co.in/patient/EngAutonomousReport.aspx/{id}"
 
-# Set specific headers to mimic the browser shown in your screenshots
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 }
@@ -56,9 +55,9 @@ def get_acronym(name):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     banner = (
         "```\n"
-        "   ☠️  G H O S T _ E N G I N E  ☠️\n"
-        "   ----------------------------\n"
-        "   [ STATUS: CORE_v18.0_ACTIVE ]\n"
+        "    ☠️  G H O S T _ E N G I N E  ☠️\n"
+        "    ----------------------------\n"
+        "    [ STATUS: CORE_v18.0_ACTIVE ]\n"
         "```\n"
         "⚡ **AWAITING TARGET UID:**"
     )
@@ -99,21 +98,21 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         r = await client.get(SIS_URL.format(id=encoded_id))
         soup = BeautifulSoup(r.text, 'html.parser')
         
-        # TARGETED SCRAPING: Find the Current Sem header, then find the 'Attendance' cell
         current_perc = "0.00"
         try:
-            # Look for the section specifically labeled for attendance
-            # We look for the cell containing 'Attendance' that is NOT inside a script tag
+            # Targeted search for the "Attendance" label
             att_label = soup.find(string=re.compile(r"^Attendance$", re.I))
             if att_label:
-                # Move to the container holding the numeric value
                 parent_row = att_label.find_parent('tr')
-                # Extract the percentage from the row, ensuring it's the actual value and not 99.9
-                nums = re.findall(r"(\d+\.\d+)", parent_row.get_text())
-                if nums:
-                    # Filter out the 99.9 script limit if present
-                    actual_vals = [n for n in nums if n != "99.9"]
-                    current_perc = actual_vals[0] if actual_vals else nums[0]
+                # Iterate through cells to find the real percentage value
+                cells = parent_row.find_all('td')
+                for cell in cells[1:]:
+                    val = cell.get_text(strip=True)
+                    # Filter for numbers like 75.21 and skip the 99.9 meta-values
+                    match = re.search(r"(\d{1,2}\.\d{2})", val)
+                    if match and match.group(1) not in ["99.90", "99.9"]:
+                        current_perc = match.group(1)
+                        break
         except: pass
 
         await query.message.reply_text(f"📊 **CURRENT ATTENDANCE**\n📈 **SCORE:** `{current_perc}%`", parse_mode=ParseMode.MARKDOWN)
@@ -159,10 +158,15 @@ async def shadow_run():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_input))
     app.add_handler(CallbackQueryHandler(button_handler))
+    
+    print("[!] GHOST_ENGINE ONLINE")
     await app.initialize()
     await app.updater.start_polling()
     await app.start()
     while True: await asyncio.sleep(3600)
 
 if __name__ == "__main__":
-    asyncio.run(shadow_run())
+    try:
+        asyncio.run(shadow_run())
+    except KeyboardInterrupt:
+        pass
