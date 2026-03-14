@@ -7,7 +7,7 @@ import re
 import httpx
 import os
 from bs4 import BeautifulSoup
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
@@ -32,7 +32,6 @@ threading.Thread(target=run_heartbeat, daemon=True).start()
 
 # --- ⚙️ CONFIG ---
 TOKEN = os.environ.get("BOT_TOKEN")
-# Note: Using the web-view compatible URL
 SIS_URL = "http://115.241.194.20/sis/Examination/Reports/StudentSearchHTMLReport_student.aspx?R={id}&T=-8584723613578166740"
 RESULT_BASE_URL = "https://narayanagroup.co.in/patient/EngAutonomousReport.aspx/{id}"
 
@@ -70,26 +69,18 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     log = await update.message.reply_text("`[!] EXTRACTING DATA...`", parse_mode=ParseMode.MARKDOWN)
     
     encoded_id = b64_encode(reg)
-    portal_link = SIS_URL.format(id=encoded_id)
-    
     try:
-        r = await client.get(portal_link)
+        r = await client.get(SIS_URL.format(id=encoded_id))
         soup = BeautifulSoup(r.text, 'html.parser')
         name_tag = soup.find(string=re.compile("NAME", re.I))
         name = name_tag.find_parent('td').find_next_sibling('td').get_text(strip=True) if name_tag else "CLASSIFIED"
         
         await log.delete()
         intel = f"🔓 **TARGET:** `{name}` | `{reg}`"
-        
-        # KEY CHANGES: Added Browser-View buttons using WebAppInfo or Direct URL
         kb = [
             [InlineKeyboardButton("📊 ATTENDANCE", callback_data="att"), InlineKeyboardButton("🏆 GRADES", callback_data="res")],
             [InlineKeyboardButton("💰 FINANCIALS", callback_data="fee")],
-            [
-                InlineKeyboardButton("🌐 VIEW ATTENDANCE", web_app=WebAppInfo(url=portal_link)),
-                InlineKeyboardButton("🌐 VIEW FEES", web_app=WebAppInfo(url=portal_link))
-            ],
-            [InlineKeyboardButton("🔗 FULL PORTAL (BROWSER)", url=portal_link)],
+            [InlineKeyboardButton("🔗 VIEW PORTAL", url=SIS_URL.format(id=encoded_id))],
             [InlineKeyboardButton("💀 PURGE", callback_data="clear")]
         ]
         await update.message.reply_text(intel, reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.MARKDOWN)
@@ -106,19 +97,24 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("ISOLATING CURRENT SEM GAUGE...")
         r = await client.get(SIS_URL.format(id=encoded_id))
         soup = BeautifulSoup(r.text, 'html.parser')
+        
         current_perc = "0.00"
         try:
+            # Targeted search for the "Attendance" label
             att_label = soup.find(string=re.compile(r"^Attendance$", re.I))
             if att_label:
                 parent_row = att_label.find_parent('tr')
+                # Iterate through cells to find the real percentage value
                 cells = parent_row.find_all('td')
                 for cell in cells[1:]:
                     val = cell.get_text(strip=True)
+                    # Filter for numbers like 75.21 and skip the 99.9 meta-values
                     match = re.search(r"(\d{1,2}\.\d{2})", val)
                     if match and match.group(1) not in ["99.90", "99.9"]:
                         current_perc = match.group(1)
                         break
         except: pass
+
         await query.message.reply_text(f"📊 **CURRENT ATTENDANCE**\n📈 **SCORE:** `{current_perc}%`", parse_mode=ParseMode.MARKDOWN)
 
     elif query.data == "res":
