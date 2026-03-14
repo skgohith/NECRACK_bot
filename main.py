@@ -133,16 +133,27 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     elif query.data == "clear":
         await query.message.edit_text("🔌 **SESSION TERMINATED.**")
-
 if __name__ == "__main__":
     if not TOKEN:
-        print("❌ CRITICAL ERROR: BOT_TOKEN not found in environment variables.")
+        print("❌ CRITICAL ERROR: BOT_TOKEN not found!")
     else:
+        # 1. Initialize the application
         app = ApplicationBuilder().token(TOKEN).build()
+
+        # 2. Add your handlers
         app.add_handler(CommandHandler("start", start))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_input))
         app.add_handler(CallbackQueryHandler(button_handler))
-        
+
         print("🤖 GHOST_ENGINE is starting...")
-        # THE FIX: This clears the backlog of old messages and forces a clean start
+
+        # 3. The modern way to run polling that avoids the loop error
+        try:
+            # We use a standard loop to avoid the "already running" error
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+
+        # drop_pending_updates=True is still there to keep it responsive
         app.run_polling(drop_pending_updates=True)
