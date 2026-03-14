@@ -16,6 +16,7 @@ from telegram.ext import (
 
 # --- 🛰️ THE HEARTBEAT (KEEPALIVE) ---
 def run_heartbeat():
+    # Railway provides the PORT variable; default to 8080 if not found
     port = int(os.environ.get("PORT", 8080))
     class HealthCheckHandler(http.server.SimpleHTTPRequestHandler):
         def do_GET(self):
@@ -23,20 +24,26 @@ def run_heartbeat():
             self.end_headers()
             self.wfile.write(b"GHOST_SYSTEM_ACTIVE")
         def log_message(self, format, *args): return
+
     try:
         socketserver.TCPServer.allow_reuse_address = True
-        with socketserver.TCPServer(("", port), HealthCheckHandler) as httpd:
+        # Binding to 0.0.0.0 is critical for Cloud Hosting (Railway/Render)
+        with socketserver.TCPServer(("0.0.0.0", port), HealthCheckHandler) as httpd:
+            print(f"📡 Heartbeat/Web Server active on port {port}")
             httpd.serve_forever()
-    except Exception: pass
+    except Exception as e:
+        print(f"❌ Heartbeat Server Error: {e}")
 
+# Start the heartbeat in a separate thread
 threading.Thread(target=run_heartbeat, daemon=True).start()
 
 # --- ⚙️ GHOST CONFIG ---
-TOKEN = "YOUR_TOKEN_HERE" # Keep your token safe!
+# Pulling TOKEN from Railway Environment Variables for security
+TOKEN = os.environ.get("BOT_TOKEN")
+
 SIS_URL = "http://115.241.194.20/sis/Examination/Reports/StudentSearchHTMLReport_student.aspx?R={id}&T=-8584723613578166740"
 RESULT_BASE_URL = "https://narayanagroup.co.in/patient/EngAutonomousReport.aspx/{id}"
 
-# Random User Agents to mimic different browsers
 USER_AGENTS = [
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/115.0",
@@ -53,9 +60,6 @@ client = httpx.AsyncClient(
 # --- 🛠️ UTILS ---
 def b64_encode(text):
     return base64.b64encode(text.encode('utf-8')).decode('utf-8')
-
-def get_status_emoji(grade):
-    return "🟢" if grade not in ["F", "AB", "FAIL"] else "🔴"
 
 # --- 🤖 HANDLERS ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -77,7 +81,6 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reg = update.message.text.strip().upper()
     context.user_data["reg"] = reg
     
-    # Progress Animation
     status_msg = await update.message.reply_text("🔍 `INJECTING PACKETS...`")
     await asyncio.sleep(0.5)
     await status_msg.edit_text("🧬 `DECRYPTING DATA...`")
@@ -88,9 +91,12 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         soup = BeautifulSoup(r.text, 'html.parser')
         
         name = "UNKNOWN_ENTITY"
+        # Search for the string "NAME" and navigate to the value
         name_tag = soup.find(string=re.compile("NAME", re.I))
         if name_tag:
-            name = name_tag.find_parent('td').find_next_sibling('td').get_text(strip=True)
+            try:
+                name = name_tag.find_parent('td').find_next_sibling('td').get_text(strip=True)
+            except: pass
 
         await status_msg.delete()
         
@@ -116,28 +122,18 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     reg = context.user_data.get("reg")
-    if not reg: return await query.answer("Session timed out.")
+    if not reg: 
+        return await query.answer("Session expired. Please re-enter ID.")
     
-    await query.answer("Extracting...")
-    encoded_id = b64_encode(reg)
-
+    await query.answer("Extracting Data...")
+    
     if query.data == "res":
-        # Simplified result display with emojis
-        r = await client.get(RESULT_BASE_URL.format(id=encoded_id))
-        soup = BeautifulSoup(r.text, 'html.parser')
-        
-        # ... (Insert your table logic here) ...
-        # Let's assume we got the data:
+        # Placeholder for result extraction logic
         res_text = (
             f"🏆 **GRADE SHEET: {reg}**\n"
             "```\n"
-            "SUB | GRD | ST\n"
-            "----+-----+---\n"
-            "MAT |  A  | ✅\n"
-            "PHY |  B  | ✅\n"
-            "BEE |  F  | ❌\n"
-            "```\n"
-            "📊 **SGPA:** `7.4` | **BL:** `1`"
+            "DATA RETRIEVAL ACTIVE...\n"
+            "```"
         )
         await query.message.reply_text(res_text, parse_mode=ParseMode.MARKDOWN)
 
@@ -145,9 +141,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.edit_text("🔌 **SESSION TERMINATED.**")
 
 if __name__ == "__main__":
-    app = ApplicationBuilder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_input))
-    app.add_handler(CallbackQueryHandler(button_handler))
-    app.run_polling()
-
+    if not TOKEN:
+        print("❌ CRITICAL ERROR: BOT_TOKEN not found in environment variables.")
+    else:
+        app = ApplicationBuilder().token(TOKEN).build()
+        app.add_handler(CommandHandler("start", start))
+        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_input))
+        app.add_handler(CallbackQueryHandler(button_handler))
+        
+        print("🤖 GHOST_ENGINE is starting...")
+        app.run_polling()
