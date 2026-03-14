@@ -32,7 +32,7 @@ def run_heartbeat():
 threading.Thread(target=run_heartbeat, daemon=True).start()
 
 # --- ⚙️ ENCRYPTED CONFIG ---
-TOKEN = os.environ.get("8491426723:AAGtl7ZD7PSVd40cmTBZfGaM9RFO9636X-8")
+BOT_TOKEN = os.environ.get("8491426723:AAGtl7ZD7PSVd40cmTBZfGaM9RFO9636X-8")
 SIS_URL = "http://115.241.194.20/sis/Examination/Reports/StudentSearchHTMLReport_student.aspx?R={id}&T=-8584723613578166740"
 RESULT_BASE_URL = "https://narayanagroup.co.in/patient/EngAutonomousReport.aspx/{id}"
 
