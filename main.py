@@ -25,7 +25,8 @@ def run_heartbeat():
         def log_message(self, format, *args): return
     try:
         socketserver.TCPServer.allow_reuse_address = True
-        with socketserver.TCPServer(("", port), HealthCheckHandler) as httpd:
+        # Binding to 0.0.0.0 is critical for Railway
+        with socketserver.TCPServer(("0.0.0.0", port), HealthCheckHandler) as httpd:
             print(f"📡 System Beacon Active on Port {port}")
             httpd.serve_forever()
     except Exception as e:
@@ -34,12 +35,12 @@ def run_heartbeat():
 threading.Thread(target=run_heartbeat, daemon=True).start()
 
 # --- ⚙️ SHADOW CONFIG ---
-# This pulls the token you provided from Railway's environment variables
-BOT_TOKEN = os.environ.get("8491426723:AAGtl7ZD7PSVd40cmTBZfGaM9RFO9636X-8")
+# This pulls the token from Railway's Variables tab (Key: BOT_TOKEN)
+TOKEN = os.environ.get("BOT_TOKEN")
+
 SIS_URL = "http://115.241.194.20/sis/Examination/Reports/StudentSearchHTMLReport_student.aspx?R={id}&T=-8584723613578166740"
 RESULT_BASE_URL = "https://narayanagroup.co.in/patient/EngAutonomousReport.aspx/{id}"
 
-# Spoofing headers to bypass basic firewalls
 HEADERS = {
     "User-Agent": f"GhostEngine/16.0 (X11; Kali; Linux x86_64) Intercept/{random.randint(100,999)}",
     "X-Forwarded-For": f"{random.randint(1,255)}.{random.randint(1,255)}.{random.randint(1,255)}.{random.randint(1,255)}"
@@ -78,10 +79,8 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reg = update.message.text.strip().upper()
     context.user_data["reg"] = reg
     
-    # Visual Hack Sequence
-    log = await update.message.reply_text("`[!] INITIALIZING EXPLOIT...`", parse_mode=ParseMode.MARKDOWN)
+    log = await update.message.reply_text("`[!] INITIALIZING EXPLOIT...`")
     await asyncio.sleep(0.5)
-    await log.edit_text("`[!] TUNNELING THROUGH PORTAL...`")
     
     encoded_id = b64_encode(reg)
     try:
@@ -137,16 +136,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 grd = cols[3].get_text(strip=True).upper()
                 if not sub or "SUB" in sub.upper() or len(grd) > 2: continue
                 
-                # PASS/FAIL BINARY LOGIC
                 is_fail = grd in ["F", "AB", "FAIL", "W"]
-                status = "❌ BREACHED" if is_fail else "✅ CLEARED"
+                status = "❌ BREACH" if is_fail else "✅ CLEAR"
                 if is_fail: backlogs += 1
                 
                 transcript += f"| {get_acronym(sub).ljust(6)} | {grd.ljust(1)} | {status.ljust(8)} |\n"
                 found = True
         
         transcript += "+-----------------------+```"
-        
         sgpa_match = re.search(r"SGPA\s*[:]?\s*(\d+\.\d+)", soup.get_text(), re.I)
         sgpa = sgpa_match.group(1) if sgpa_match else "0.00"
         verdict = "🔴 [ COMPROMISED ]" if backlogs > 0 else "🟢 [ SECURE ]"
@@ -186,10 +183,16 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif query.data == "clear":
         await query.message.edit_text("`[!] SYSTEM PURGED. EVIDENCE REMOVED.`")
 
+# --- 🚀 RUNTIME ---
 if __name__ == "__main__":
-    print("💀 GHOST_ENGINE ONLINE. COMMENCING OPERATION...")
-    app = ApplicationBuilder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_input))
-    app.add_handler(CallbackQueryHandler(button_handler))
-    app.run_polling()
+    if not TOKEN:
+        print("❌ CRITICAL ERROR: BOT_TOKEN not found in Railway Variables!")
+    else:
+        print("💀 GHOST_ENGINE ONLINE. COMMENCING OPERATION...")
+        app = ApplicationBuilder().token(TOKEN).build()
+        app.add_handler(CommandHandler("start", start))
+        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_input))
+        app.add_handler(CallbackQueryHandler(button_handler))
+        
+        # drop_pending_updates=True fixes the "No Response" issue
+        app.run_polling(drop_pending_updates=True)
