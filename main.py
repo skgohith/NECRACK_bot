@@ -13,14 +13,14 @@ from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
 )
 
-# --- 🛰️ HEARTBEAT (Railway/Deployment Keep-Alive) ---
+# --- 🛰️ HEARTBEAT ---
 def run_heartbeat():
     port = int(os.environ.get("PORT", 8080))
     class HealthCheckHandler(http.server.SimpleHTTPRequestHandler):
         def do_GET(self):
             self.send_response(200)
             self.end_headers()
-            self.wfile.write(b"GHOST_CORE_V17.1_ACTIVE")
+            self.wfile.write(b"GHOST_CORE_V18.0_ACTIVE")
         def log_message(self, format, *args): return
     try:
         socketserver.TCPServer.allow_reuse_address = True
@@ -35,16 +35,22 @@ TOKEN = os.environ.get("BOT_TOKEN")
 SIS_URL = "http://115.241.194.20/sis/Examination/Reports/StudentSearchHTMLReport_student.aspx?R={id}&T=-8584723613578166740"
 RESULT_BASE_URL = "https://narayanagroup.co.in/patient/EngAutonomousReport.aspx/{id}"
 
-client = httpx.AsyncClient(timeout=60.0, verify=False, follow_redirects=True)
+# Set specific headers to mimic the browser shown in your screenshots
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+}
+
+client = httpx.AsyncClient(timeout=60.0, verify=False, follow_redirects=True, headers=HEADERS)
 
 # --- 🛠️ UTILS ---
 def b64_encode(text):
     return base64.b64encode(text.encode('utf-8')).decode('utf-8')
 
 def get_acronym(name):
-    excluded = ['AND', 'THE', 'OF', 'IN', 'FOR', 'WITH', 'BY', 'LAB', 'LABORATORY']
+    excluded = ['AND', 'THE', 'OF', 'IN', 'FOR', 'WITH', 'BY', 'LAB', 'LABORATORY', 'I', 'II', 'III', 'IV']
     words = [word for word in re.split(r'[\s\-]+', name) if word.upper() not in excluded]
-    return "".join([word[0] for word in words if word]).upper()[:6] if words else "SUB"
+    if not words: return "SUB"
+    return "".join([word[0] for word in words if word]).upper()[:6]
 
 # --- 🤖 SHADOW OPERATORS ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -52,7 +58,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "```\n"
         "   ☠️  G H O S T _ E N G I N E  ☠️\n"
         "   ----------------------------\n"
-        "   [ STATUS: CORE_v17.1_ONLINE ]\n"
+        "   [ STATUS: CORE_v18.0_ACTIVE ]\n"
         "```\n"
         "⚡ **AWAITING TARGET UID:**"
     )
@@ -61,7 +67,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reg = update.message.text.strip().upper()
     context.user_data["reg"] = reg
-    log = await update.message.reply_text("`[!] BREACHING FIREWALL...`", parse_mode=ParseMode.MARKDOWN)
+    log = await update.message.reply_text("`[!] EXTRACTING DATA...`", parse_mode=ParseMode.MARKDOWN)
     
     encoded_id = b64_encode(reg)
     try:
@@ -72,16 +78,15 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         await log.delete()
         intel = f"🔓 **TARGET:** `{name}` | `{reg}`"
-        
         kb = [
             [InlineKeyboardButton("📊 ATTENDANCE", callback_data="att"), InlineKeyboardButton("🏆 GRADES", callback_data="res")],
             [InlineKeyboardButton("💰 FINANCIALS", callback_data="fee")],
-            [InlineKeyboardButton("🔗 PORTAL", url=SIS_URL.format(id=encoded_id))],
+            [InlineKeyboardButton("🔗 VIEW PORTAL", url=SIS_URL.format(id=encoded_id))],
             [InlineKeyboardButton("💀 PURGE", callback_data="clear")]
         ]
         await update.message.reply_text(intel, reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.MARKDOWN)
     except:
-        await log.edit_text("❌ `CONNECTION_ERROR`")
+        await log.edit_text("❌ `NODE_ERROR: PORTAL TIMEOUT`")
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -90,29 +95,34 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     encoded_id = b64_encode(reg)
 
     if query.data == "att":
-        await query.answer("ISOLATING GAUGE DATA...")
+        await query.answer("ISOLATING CURRENT SEM GAUGE...")
         r = await client.get(SIS_URL.format(id=encoded_id))
         soup = BeautifulSoup(r.text, 'html.parser')
         
-        # LOGIC: Locate the 'Attendance' label in the HTML structure
-        # Then find the numeric value in the same container or next sibling
-        att_label = soup.find(string=re.compile(r"Attendance", re.I))
+        # TARGETED SCRAPING: Find the Current Sem header, then find the 'Attendance' cell
         current_perc = "0.00"
-        
-        if att_label:
-            # Navigate to the value inside the gauge container
-            container = att_label.find_parent()
-            perc_match = re.search(r"(\d+\.\d+)", container.get_text())
-            if perc_match:
-                current_perc = perc_match.group(1)
+        try:
+            # Look for the section specifically labeled for attendance
+            # We look for the cell containing 'Attendance' that is NOT inside a script tag
+            att_label = soup.find(string=re.compile(r"^Attendance$", re.I))
+            if att_label:
+                # Move to the container holding the numeric value
+                parent_row = att_label.find_parent('tr')
+                # Extract the percentage from the row, ensuring it's the actual value and not 99.9
+                nums = re.findall(r"(\d+\.\d+)", parent_row.get_text())
+                if nums:
+                    # Filter out the 99.9 script limit if present
+                    actual_vals = [n for n in nums if n != "99.9"]
+                    current_perc = actual_vals[0] if actual_vals else nums[0]
+        except: pass
 
-        await query.message.reply_text(f"📊 **CURRENT ATTENDANCE:** `{current_perc}%`", parse_mode=ParseMode.MARKDOWN)
+        await query.message.reply_text(f"📊 **CURRENT ATTENDANCE**\n📈 **SCORE:** `{current_perc}%`", parse_mode=ParseMode.MARKDOWN)
 
     elif query.data == "res":
-        await query.answer("DUMPING TRANSCRIPT...")
+        await query.answer("DUMPING GRADES...")
         r = await client.get(RESULT_BASE_URL.format(id=encoded_id))
         soup = BeautifulSoup(r.text, 'html.parser')
-        transcript = "```\n+-- [ TRANSCRIPT ] --+\n| CODE   | G | STATUS |\n+--------+---+--------+\n"
+        transcript = "```\n+-- [ GRADES ] --+\n| CODE   | G | ST |\n+--------+---+----+\n"
         found = False
         for row in soup.find_all('tr'):
             cols = row.find_all(['td', 'th'])
@@ -121,14 +131,14 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if not sub or "SUB" in sub.upper() or len(grd) > 2: continue
                 transcript += f"| {get_acronym(sub).ljust(6)} | {grd.ljust(1)} | {'✅' if grd not in ['F', 'AB'] else '❌'} |\n"
                 found = True
-        transcript += "```"
-        await query.message.reply_text(f"🏆 **RESULTS**\n{transcript if found else '`[!] ENCRYPTED`'}", parse_mode=ParseMode.MARKDOWN)
+        transcript += "+----------------+```"
+        await query.message.reply_text(f"🏆 **TRANSCRIPT**\n{transcript if found else '`[!] NO DATA`'}", parse_mode=ParseMode.MARKDOWN)
 
     elif query.data == "fee":
-        await query.answer("FETCHING LEDGER...")
+        await query.answer("PULLING LEDGER...")
         r = await client.get(SIS_URL.format(id=encoded_id))
         soup = BeautifulSoup(r.text, 'html.parser')
-        report = "💰 **FINANCIAL HISTORY**\n━━━━━━━━━━━━━━━\n"
+        report = "💰 **LEDGER**\n━━━━━━━━━━━━━━━\n"
         for y in ["I-BTECH", "II-BTECH", "III-BTECH", "IV-BTECH", "FIN-BTECH"]:
             h = soup.find(string=re.compile(f"FEE DETAILS\s*\({y}\)", re.I))
             if h:
@@ -141,8 +151,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.message.reply_text(report, parse_mode=ParseMode.MARKDOWN)
 
     elif query.data == "clear":
-        await query.message.edit_text("`[!] SYSTEM PURGED.`")
+        await query.message.edit_text("`[!] SYSTEM PURGED. SEND NEW REG NO.`")
 
+# --- 🚀 RUNTIME ---
 async def shadow_run():
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
