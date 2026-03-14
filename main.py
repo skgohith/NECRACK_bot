@@ -16,7 +16,6 @@ from telegram.ext import (
 
 # --- 🛰️ THE HEARTBEAT (KEEPALIVE) ---
 def run_heartbeat():
-    # Railway provides the PORT variable; default to 8080 if not found
     port = int(os.environ.get("PORT", 8080))
     class HealthCheckHandler(http.server.SimpleHTTPRequestHandler):
         def do_GET(self):
@@ -27,20 +26,17 @@ def run_heartbeat():
 
     try:
         socketserver.TCPServer.allow_reuse_address = True
-        # Binding to 0.0.0.0 is critical for Cloud Hosting (Railway/Render)
+        # Binding to 0.0.0.0 ensures Railway can reach the server
         with socketserver.TCPServer(("0.0.0.0", port), HealthCheckHandler) as httpd:
             print(f"📡 Heartbeat/Web Server active on port {port}")
             httpd.serve_forever()
     except Exception as e:
         print(f"❌ Heartbeat Server Error: {e}")
 
-# Start the heartbeat in a separate thread
 threading.Thread(target=run_heartbeat, daemon=True).start()
 
 # --- ⚙️ GHOST CONFIG ---
-# Pulling TOKEN from Railway Environment Variables for security
 TOKEN = os.environ.get("BOT_TOKEN")
-
 SIS_URL = "http://115.241.194.20/sis/Examination/Reports/StudentSearchHTMLReport_student.aspx?R={id}&T=-8584723613578166740"
 RESULT_BASE_URL = "https://narayanagroup.co.in/patient/EngAutonomousReport.aspx/{id}"
 
@@ -91,7 +87,6 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         soup = BeautifulSoup(r.text, 'html.parser')
         
         name = "UNKNOWN_ENTITY"
-        # Search for the string "NAME" and navigate to the value
         name_tag = soup.find(string=re.compile("NAME", re.I))
         if name_tag:
             try:
@@ -128,7 +123,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer("Extracting Data...")
     
     if query.data == "res":
-        # Placeholder for result extraction logic
         res_text = (
             f"🏆 **GRADE SHEET: {reg}**\n"
             "```\n"
@@ -150,4 +144,5 @@ if __name__ == "__main__":
         app.add_handler(CallbackQueryHandler(button_handler))
         
         print("🤖 GHOST_ENGINE is starting...")
-        app.run_polling()
+        # THE FIX: This clears the backlog of old messages and forces a clean start
+        app.run_polling(drop_pending_updates=True)
