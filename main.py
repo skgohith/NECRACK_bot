@@ -20,7 +20,7 @@ def run_heartbeat():
         def do_GET(self):
             self.send_response(200)
             self.end_headers()
-            self.wfile.write(b"GHOST_CORE_V16.9_ACTIVE")
+            self.wfile.write(b"GHOST_CORE_V17.1_ACTIVE")
         def log_message(self, format, *args): return
     try:
         socketserver.TCPServer.allow_reuse_address = True
@@ -30,12 +30,11 @@ def run_heartbeat():
 
 threading.Thread(target=run_heartbeat, daemon=True).start()
 
-# --- ⚙️ SHADOW CONFIG ---
+# --- ⚙️ CONFIG ---
 TOKEN = os.environ.get("BOT_TOKEN")
 SIS_URL = "http://115.241.194.20/sis/Examination/Reports/StudentSearchHTMLReport_student.aspx?R={id}&T=-8584723613578166740"
 RESULT_BASE_URL = "https://narayanagroup.co.in/patient/EngAutonomousReport.aspx/{id}"
 
-# Higher timeout to handle portal lag
 client = httpx.AsyncClient(timeout=60.0, verify=False, follow_redirects=True)
 
 # --- 🛠️ UTILS ---
@@ -43,10 +42,9 @@ def b64_encode(text):
     return base64.b64encode(text.encode('utf-8')).decode('utf-8')
 
 def get_acronym(name):
-    excluded = ['AND', 'THE', 'OF', 'IN', 'FOR', 'WITH', 'BY', 'LAB', 'LABORATORY', 'I', 'II', 'III', 'IV']
+    excluded = ['AND', 'THE', 'OF', 'IN', 'FOR', 'WITH', 'BY', 'LAB', 'LABORATORY']
     words = [word for word in re.split(r'[\s\-]+', name) if word.upper() not in excluded]
-    if not words: return "SUB"
-    return "".join([word[0] for word in words if word]).upper()[:6]
+    return "".join([word[0] for word in words if word]).upper()[:6] if words else "SUB"
 
 # --- 🤖 SHADOW OPERATORS ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -54,16 +52,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "```\n"
         "   ☠️  G H O S T _ E N G I N E  ☠️\n"
         "   ----------------------------\n"
-        "   [ STATUS: CORE_v16.9_READY ]\n"
+        "   [ STATUS: CORE_v17.1_ONLINE ]\n"
         "```\n"
-        "⚡ **AWAITING TARGET UID (Reg No):**"
+        "⚡ **AWAITING TARGET UID:**"
     )
     await update.message.reply_text(banner, parse_mode=ParseMode.MARKDOWN)
 
 async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reg = update.message.text.strip().upper()
-    context.user_data["reg"] = reg # Unique session storage
-    log = await update.message.reply_text("`[!] BREACHING PORTAL...`", parse_mode=ParseMode.MARKDOWN)
+    context.user_data["reg"] = reg
+    log = await update.message.reply_text("`[!] BREACHING FIREWALL...`", parse_mode=ParseMode.MARKDOWN)
     
     encoded_id = b64_encode(reg)
     try:
@@ -78,13 +76,12 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         kb = [
             [InlineKeyboardButton("📊 ATTENDANCE", callback_data="att"), InlineKeyboardButton("🏆 GRADES", callback_data="res")],
             [InlineKeyboardButton("💰 FINANCIALS", callback_data="fee")],
-            [InlineKeyboardButton("🔗 VIEW ATT.", url=SIS_URL.format(id=encoded_id)),
-             InlineKeyboardButton("🔗 VIEW RES.", url=RESULT_BASE_URL.format(id=encoded_id))],
+            [InlineKeyboardButton("🔗 PORTAL", url=SIS_URL.format(id=encoded_id))],
             [InlineKeyboardButton("💀 PURGE", callback_data="clear")]
         ]
         await update.message.reply_text(intel, reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.MARKDOWN)
     except:
-        await log.edit_text("❌ `NODE_ERROR: PORTAL_UNREACHABLE`")
+        await log.edit_text("❌ `CONNECTION_ERROR`")
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -93,81 +90,68 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     encoded_id = b64_encode(reg)
 
     if query.data == "att":
-        await query.answer("SCRAPING CURRENT SEM...")
+        await query.answer("ISOLATING GAUGE DATA...")
         r = await client.get(SIS_URL.format(id=encoded_id))
-        # ATTENDANCE MECHANISM: Identify current sem and pull last percentage (The Gauge value)
-        matches = re.findall(r"(\d+\.\d+)\s*%", r.text)
-        current_perc = matches[-1] if matches else "0.00"
+        soup = BeautifulSoup(r.text, 'html.parser')
         
-        sem_label = re.search(r"Current Sem\s*-\s*([^<]+)", r.text, re.I)
-        sem_name = sem_label.group(1).strip() if sem_label else "CURRENT SEM"
+        # LOGIC: Locate the 'Attendance' label in the HTML structure
+        # Then find the numeric value in the same container or next sibling
+        att_label = soup.find(string=re.compile(r"Attendance", re.I))
+        current_perc = "0.00"
+        
+        if att_label:
+            # Navigate to the value inside the gauge container
+            container = att_label.find_parent()
+            perc_match = re.search(r"(\d+\.\d+)", container.get_text())
+            if perc_match:
+                current_perc = perc_match.group(1)
 
-        await query.message.reply_text(
-            f"📊 **{sem_name}**\n━━━━━━━━━━━━━━━━━━━━\n"
-            f"📈 **ATTENDANCE:** `{current_perc}%` | {'🚨 ALERT' if float(current_perc) < 75 else '🛡️ SECURE'}", 
-            parse_mode=ParseMode.MARKDOWN
-        )
+        await query.message.reply_text(f"📊 **CURRENT ATTENDANCE:** `{current_perc}%`", parse_mode=ParseMode.MARKDOWN)
 
     elif query.data == "res":
-        await query.answer("EXTRACTING TRANSCRIPT...")
+        await query.answer("DUMPING TRANSCRIPT...")
         r = await client.get(RESULT_BASE_URL.format(id=encoded_id))
         soup = BeautifulSoup(r.text, 'html.parser')
-        transcript = "```\n+-- [ TRANSCRIPT ] --+\n| CODE   | G | STATUS   |\n+--------+---+----------+\n"
-        found, backlogs = False, 0
+        transcript = "```\n+-- [ TRANSCRIPT ] --+\n| CODE   | G | STATUS |\n+--------+---+--------+\n"
+        found = False
         for row in soup.find_all('tr'):
             cols = row.find_all(['td', 'th'])
             if len(cols) >= 4:
                 sub, grd = cols[2].get_text(strip=True), cols[3].get_text(strip=True).upper()
                 if not sub or "SUB" in sub.upper() or len(grd) > 2: continue
-                is_fail = grd in ["F", "AB", "FAIL", "W"]
-                status = "❌ FAIL" if is_fail else "✅ PASS"
-                if is_fail: backlogs += 1
-                transcript += f"| {get_acronym(sub).ljust(6)} | {grd.ljust(1)} | {status.ljust(8)} |\n"
+                transcript += f"| {get_acronym(sub).ljust(6)} | {grd.ljust(1)} | {'✅' if grd not in ['F', 'AB'] else '❌'} |\n"
                 found = True
-        transcript += "+-----------------------+```"
-        sgpa = re.search(r"SGPA\s*[:]?\s*(\d+\.\d+)", soup.get_text(), re.I)
-        res_msg = f"🏆 **SGPA:** `{sgpa.group(1) if sgpa else '0.00'}` | ⚠️ **BL:** `{backlogs}`\n\n{transcript if found else '`[!] NO RESULTS FOUND`'}"
-        await query.message.reply_text(res_msg, parse_mode=ParseMode.MARKDOWN)
+        transcript += "```"
+        await query.message.reply_text(f"🏆 **RESULTS**\n{transcript if found else '`[!] ENCRYPTED`'}", parse_mode=ParseMode.MARKDOWN)
 
     elif query.data == "fee":
-        await query.answer("PULLING FULL LEDGER...")
+        await query.answer("FETCHING LEDGER...")
         r = await client.get(SIS_URL.format(id=encoded_id))
         soup = BeautifulSoup(r.text, 'html.parser')
-        report = "💰 **FINANCIAL SUMMARY**\n━━━━━━━━━━━━━━━\n"
-        found = False
-        # Extended search for all years including FIN-BTECH
+        report = "💰 **FINANCIAL HISTORY**\n━━━━━━━━━━━━━━━\n"
         for y in ["I-BTECH", "II-BTECH", "III-BTECH", "IV-BTECH", "FIN-BTECH"]:
-            anchor = soup.find(string=re.compile(f"FEE DETAILS\s*\({y}\)", re.I))
-            if anchor:
+            h = soup.find(string=re.compile(f"FEE DETAILS\s*\({y}\)", re.I))
+            if h:
                 try:
-                    row_text = anchor.find_parent('tr').find_next_sibling('tr').get_text(" ")
-                    p = re.search(r"PAID.*?([\d,.]+)", row_text, re.I).group(1)
-                    b = re.search(r"BALANCE.*?([\d,.]+)", row_text, re.I).group(1)
-                    report += f"📅 **{y}**\n├ Paid: `₹{p}`\n└ Bal:  `₹{b}`\n\n"
-                    found = True
+                    row = h.find_parent('tr').find_next_sibling('tr').get_text(" ")
+                    p = re.search(r"PAID.*?([\d,.]+)", row, re.I).group(1)
+                    b = re.search(r"BALANCE.*?([\d,.]+)", row, re.I).group(1)
+                    report += f"📅 **{y}**: `P: ₹{p}` | `B: ₹{b}`\n"
                 except: continue
-        await query.message.reply_text(report if found else "❌ `FINANCIAL RECORDS NOT FOUND`", parse_mode=ParseMode.MARKDOWN)
+        await query.message.reply_text(report, parse_mode=ParseMode.MARKDOWN)
 
     elif query.data == "clear":
-        await query.message.edit_text("`[!] SYSTEM PURGED. SEND NEW REG NO.`")
+        await query.message.edit_text("`[!] SYSTEM PURGED.`")
 
-# --- 🚀 RUNTIME BOOT ---
 async def shadow_run():
-    if not TOKEN:
-        print("❌ CRITICAL: BOT_TOKEN MISSING")
-        return
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_input))
     app.add_handler(CallbackQueryHandler(button_handler))
-    
-    await app.bot.delete_webhook(drop_pending_updates=True)
-    print("🤖 GHOST_ENGINE V16.9 BOOTING...")
     await app.initialize()
-    await app.updater.start_polling(drop_pending_updates=True)
+    await app.updater.start_polling()
     await app.start()
     while True: await asyncio.sleep(3600)
 
 if __name__ == "__main__":
-    try: asyncio.run(shadow_run())
-    except Exception as e: print(f"❌ KERNEL_PANIC: {e}")
+    asyncio.run(shadow_run())
