@@ -45,12 +45,6 @@ client = httpx.AsyncClient(timeout=60.0, verify=False, follow_redirects=True, he
 def b64_encode(text):
     return base64.b64encode(text.encode('utf-8')).decode('utf-8')
 
-def get_acronym(name):
-    excluded = ['AND', 'THE', 'OF', 'IN', 'FOR', 'WITH', 'BY', 'LAB', 'LABORATORY', 'I', 'II', 'III', 'IV']
-    words = [word for word in re.split(r'[\s\-]+', name) if word.upper() not in excluded]
-    if not words: return "SUB"
-    return "".join([word[0] for word in words if word]).upper()[:6]
-
 # --- 🤖 SHADOW OPERATORS ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     banner = (
@@ -100,15 +94,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         current_perc = "0.00"
         try:
-            # Targeted search for the "Attendance" label
             att_label = soup.find(string=re.compile(r"^Attendance$", re.I))
             if att_label:
                 parent_row = att_label.find_parent('tr')
-                # Iterate through cells to find the real percentage value
                 cells = parent_row.find_all('td')
                 for cell in cells[1:]:
                     val = cell.get_text(strip=True)
-                    # Filter for numbers like 75.21 and skip the 99.9 meta-values
                     match = re.search(r"(\d{1,2}\.\d{2})", val)
                     if match and match.group(1) not in ["99.90", "99.9"]:
                         current_perc = match.group(1)
@@ -121,17 +112,32 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("DUMPING GRADES...")
         r = await client.get(RESULT_BASE_URL.format(id=encoded_id))
         soup = BeautifulSoup(r.text, 'html.parser')
-        transcript = "```\n+-- [ GRADES ] --+\n| CODE   | G | ST |\n+--------+---+----+\n"
+        
+        report_lines = ["🏆 **TRANSCRIPT**", "━━━━━━━━━━━━━━━"]
         found = False
+        
         for row in soup.find_all('tr'):
             cols = row.find_all(['td', 'th'])
             if len(cols) >= 4:
-                sub, grd = cols[2].get_text(strip=True), cols[3].get_text(strip=True).upper()
-                if not sub or "SUB" in sub.upper() or len(grd) > 2: continue
-                transcript += f"| {get_acronym(sub).ljust(6)} | {grd.ljust(1)} | {'✅' if grd not in ['F', 'AB'] else '❌'} |\n"
+                subject_name = cols[2].get_text(strip=True)
+                grade = cols[3].get_text(strip=True).upper()
+                
+                # Filter out header rows or invalid data
+                if not subject_name or "SUBJECT" in subject_name.upper() or len(grade) > 2:
+                    continue
+                
+                status_emoji = "✅" if grade not in ['F', 'AB', 'W', 'I'] else "❌"
+                
+                # Append formatted text for each subject
+                report_lines.append(f"{status_emoji} **{subject_name}**")
+                report_lines.append(f"└─ `GRADE: {grade}`\n")
                 found = True
-        transcript += "+----------------+```"
-        await query.message.reply_text(f"🏆 **TRANSCRIPT**\n{transcript if found else '`[!] NO DATA`'}", parse_mode=ParseMode.MARKDOWN)
+        
+        if found:
+            final_report = "\n".join(report_lines)
+            await query.message.reply_text(final_report, parse_mode=ParseMode.MARKDOWN)
+        else:
+            await query.message.reply_text("`[!] NO GRADE DATA FOUND`", parse_mode=ParseMode.MARKDOWN)
 
     elif query.data == "fee":
         await query.answer("PULLING LEDGER...")
