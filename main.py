@@ -73,7 +73,7 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
         intel = f"🔓 **TARGET:** `{name}` | `{reg}`"
         kb = [
             [InlineKeyboardButton("📊 ATTENDANCE", callback_data="att"), InlineKeyboardButton("🏆 GRADES", callback_data="res")],
-            [InlineKeyboardButton("💰 FINANCIALS", callback_data="fee")],
+            [InlineKeyboardButton("💰 FEES", callback_data="fee")],
             [InlineKeyboardButton("🔗 VIEW PORTAL", url=SIS_URL.format(id=encoded_id))],
             [InlineKeyboardButton("💀 PURGE", callback_data="clear")]
         ]
@@ -113,7 +113,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         r = await client.get(RESULT_BASE_URL.format(id=encoded_id))
         soup = BeautifulSoup(r.text, 'html.parser')
         
-        report_lines = ["🏆 **TRANSCRIPT**", "━━━━━━━━━━━━━━━"]
+        report_lines = ["🏆 **GRADES**", "━━━━━━━━━━━━━━━"]
         found = False
         
         for row in soup.find_all('tr'):
