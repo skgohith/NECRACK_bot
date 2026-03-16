@@ -1,4 +1,4 @@
-import base64
+Import base64
 import asyncio
 import http.server
 import socketserver
@@ -7,7 +7,7 @@ import re
 import httpx
 import os
 from bs4 import BeautifulSoup
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler, ContextTypes, filters
@@ -32,16 +32,8 @@ threading.Thread(target=run_heartbeat, daemon=True).start()
 
 # --- ⚙️ CONFIG ---
 TOKEN = os.environ.get("BOT_TOKEN")
-
-# URL for scraping/background data
 SIS_URL = "http://115.241.194.20/sis/Examination/Reports/StudentSearchHTMLReport_student.aspx?R={id}&T=-8584723613578166740"
 RESULT_BASE_URL = "https://narayanagroup.co.in/patient/EngAutonomousReport.aspx/{id}"
-
-# NEW: Independent Browser Portal URLs
-# Note: Using direct URLs. Telegram WebApps usually require HTTPS. 
-# If HTTP fails, these will open in the external browser.
-ATTENDANCE_PORTAL_URL = "http://115.241.194.20/sis/Examination/Reports/StudentSearchHTMLReport_student.aspx"
-RESULT_PORTAL_URL = "https://narayanagroup.co.in/patient/EngAutonomousReport.aspx"
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
@@ -61,22 +53,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "    ----------------------------\n"
         "    [ STATUS: CORE_v18.0_ACTIVE ]\n"
         "```\n"
-        "⚡ **SELECT PROTOCOL:**"
+        "⚡ **AWAITING TARGET UID:**"
     )
-    
-    # Grid layout: Top row for Portals, Bottom for Scraping
-    kb = [
-        [
-            InlineKeyboardButton("🌐 ATTENDANCE PORTAL", web_app=WebAppInfo(url=ATTENDANCE_PORTAL_URL)),
-            InlineKeyboardButton("🌐 RESULT PORTAL", web_app=WebAppInfo(url=RESULT_PORTAL_URL))
-        ],
-        [InlineKeyboardButton("🔍 SCRAPE TARGET UID", callback_data="trigger_scrape")]
-    ]
-    
-    await update.message.reply_text(banner, reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.MARKDOWN)
+    await update.message.reply_text(banner, parse_mode=ParseMode.MARKDOWN)
 
 async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Only process if user has triggered the scrape flow
     reg = update.message.text.strip().upper()
     context.user_data["reg"] = reg
     log = await update.message.reply_text("`[!] EXTRACTING DATA...`", parse_mode=ParseMode.MARKDOWN)
@@ -97,17 +78,11 @@ async def handle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             [InlineKeyboardButton("💀 PURGE", callback_data="clear")]
         ]
         await update.message.reply_text(intel, reply_markup=InlineKeyboardMarkup(kb), parse_mode=ParseMode.MARKDOWN)
-    except Exception as e:
-        await log.edit_text(f"❌ `NODE_ERROR: PORTAL TIMEOUT`")
+    except:
+        await log.edit_text("❌ `NODE_ERROR: PORTAL TIMEOUT`")
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    
-    if query.data == "trigger_scrape":
-        await query.answer()
-        await query.message.reply_text("⚡ **AWAITING TARGET UID:**")
-        return
-
     reg = context.user_data.get("reg")
     if not reg: return await query.answer("❌ SESSION_EXPIRED")
     encoded_id = b64_encode(reg)
@@ -130,64 +105,11 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         current_perc = match.group(1)
                         break
         except: pass
+
         await query.message.reply_text(f"📊 **CURRENT ATTENDANCE**\n📈 **SCORE:** `{current_perc}%`", parse_mode=ParseMode.MARKDOWN)
 
     elif query.data == "res":
         await query.answer("DUMPING GRADES...")
-        r = await client.get(RESULT_BASE_URL.format(id=encoded_id))
-        soup = BeautifulSoup(r.text, 'html.parser')
-        report_lines = ["🏆 **GRADES**", "━━━━━━━━━━━━━━━"]
-        found = False
-        for row in soup.find_all('tr'):
-            cols = row.find_all(['td', 'th'])
-            if len(cols) >= 4:
-                subject_name = cols[2].get_text(strip=True)
-                grade = cols[3].get_text(strip=True).upper()
-                if not subject_name or "SUBJECT" in subject_name.upper() or len(grade) > 2: continue
-                status_emoji = "✅" if grade not in ['F', 'AB', 'W', 'I'] else "❌"
-                report_lines.append(f"{status_emoji} **{subject_name}**\n└─ `GRADE: {grade}`\n")
-                found = True
-        
-        final_report = "\n".join(report_lines) if found else "`[!] NO GRADE DATA FOUND`"
-        await query.message.reply_text(final_report, parse_mode=ParseMode.MARKDOWN)
-
-    elif query.data == "fee":
-        await query.answer("PULLING LEDGER...")
-        r = await client.get(SIS_URL.format(id=encoded_id))
-        soup = BeautifulSoup(r.text, 'html.parser')
-        report = "💰 **LEDGER**\n━━━━━━━━━━━━━━━\n"
-        for y in ["I-BTECH", "II-BTECH", "III-BTECH", "IV-BTECH", "FIN-BTECH"]:
-            h = soup.find(string=re.compile(f"FEE DETAILS\s*\({y}\)", re.I))
-            if h:
-                try:
-                    row = h.find_parent('tr').find_next_sibling('tr').get_text(" ")
-                    p = re.search(r"PAID.*?([\d,.]+)", row, re.I).group(1)
-                    b = re.search(r"BALANCE.*?([\d,.]+)", row, re.I).group(1)
-                    report += f"📅 **{y}**: `P: ₹{p}` | `B: ₹{b}`\n"
-                except: continue
-        await query.message.reply_text(report, parse_mode=ParseMode.MARKDOWN)
-
-    elif query.data == "clear":
-        await query.message.edit_text("`[!] SYSTEM PURGED. SEND NEW REG NO.`")
-
-# --- 🚀 RUNTIME ---
-async def shadow_run():
-    app = ApplicationBuilder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_input))
-    app.add_handler(CallbackQueryHandler(button_handler))
-    
-    print("[!] GHOST_ENGINE ONLINE")
-    await app.initialize()
-    await app.updater.start_polling()
-    await app.start()
-    while True: await asyncio.sleep(3600)
-
-if __name__ == "__main__":
-    try:
-        asyncio.run(shadow_run())
-    except KeyboardInterrupt:
-        pass
         r = await client.get(RESULT_BASE_URL.format(id=encoded_id))
         soup = BeautifulSoup(r.text, 'html.parser')
         
